@@ -11,4 +11,5 @@ PACKAGES = "packagegroup-qti-qcawifi"
 RDEPENDS_packagegroup-qti-qcawifi = " \
          iw \
          roxml \
+         wireless-tools \
          "
