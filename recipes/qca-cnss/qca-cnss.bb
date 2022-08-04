@@ -3,8 +3,8 @@ DESCRIPTION = "QCA CNSS Wifi Platform Driver"
 FILESPATH =+ "${WORKSPACE}:"
 FILESEXTRAPATHS_prepend := "${THISDIR}/files:"
 
-LICENSE = "GPLv2"
-LIC_FILES_CHKSUM = "file://main.c;beginline=4;endline=11;md5=28fe1ff28187fe4efdc6414eeb8185e3"
+LICENSE = "GPL-2.0"
+LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/${LICENSE};md5=801f80980d171dd6425610833a22dbe6"
 
 inherit autotools-brokensep module qperf
 
