@@ -1,0 +1,80 @@
+From ec743f45079b84da20fc44145ee2dcd049f1ee3e Mon Sep 17 00:00:00 2001
+From: Larry Bassel <lbassel@codeaurora.org>
+Date: Fri, 17 Jan 2014 10:33:08 -0800
+Subject: [PATCH 1/4] ANDROID: GKI: arm64: provide dma cache routines
+
+Add defines for dmac_*_range for compatibility with arm32
+
+Change-Id: I6456c02bad73fb54a874dc9925d3d43d9b8be2f2
+Signed-off-by: Larry Bassel <lbassel@codeaurora.org>
+(cherry picked from commit 0930bab0db67cc0d91e52e385e3e061871c6be05)
+Signed-off-by: Prasad Sodagudi <psodagud@codeaurora.org>
+(cherry picked from commit a313e54567627a1fd96cd267e2c6c358d14e468c)
+[salyzyn squashed in commit 4008eb493aa2f95094511125f136eb6ffbfa33b8]
+Signed-off-by: Mark Salyzyn <salyzyn@google.com>
+Bug: 141888626
+Signed-off-by: Miaoqing Pan <quic_miaoqing@quicinc.com>
+---
+ arch/arm64/include/asm/cacheflush.h | 9 +++++++++
+ arch/arm64/mm/cache.S               | 4 ++--
+ arch/arm64/mm/flush.c               | 2 ++
+ 3 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/include/asm/cacheflush.h b/arch/arm64/include/asm/cacheflush.h
+index 353f670a73b4..46c7773add85 100644
+--- a/arch/arm64/include/asm/cacheflush.h
++++ b/arch/arm64/include/asm/cacheflush.h
+@@ -120,6 +120,15 @@ static inline void flush_cache_range(struct vm_area_struct *vma,
+ extern void __dma_map_area(const void *, size_t, int);
+ extern void __dma_unmap_area(const void *, size_t, int);
+ extern void __dma_flush_area(const void *, size_t);
++extern void __dma_inv_area(const void *, size_t size);
++extern void __dma_clean_area(const void *, size_t size);
++
++#define dmac_flush_range(start, end) \
++	__dma_flush_area(start, (void *)(end) - (void *)(start))
++#define dmac_inv_range(start, end) \
++	__dma_inv_area(start, (void *)(end) - (void *)(start))
++#define dmac_clean_range(start, end) \
++	__dma_clean_area(start, (void *)(end) - (void *)(start))
+ 
+ /*
+  * Copy user data from/to a page which is mapped into a different
+diff --git a/arch/arm64/mm/cache.S b/arch/arm64/mm/cache.S
+index 0ee30f93b546..ecc4b18eaa3f 100644
+--- a/arch/arm64/mm/cache.S
++++ b/arch/arm64/mm/cache.S
+@@ -219,7 +219,7 @@ ENTRY(__inval_dcache_area)
+  *	- start   - virtual start address of region
+  *	- size    - size in question
+  */
+-__dma_inv_area:
++ENTRY(__dma_inv_area)
+ 	add	x1, x1, x0
+ 	dcache_line_size x2, x3
+ 	sub	x3, x2, #1
+@@ -258,7 +258,7 @@ ENTRY(__clean_dcache_area_poc)
+  *	- start   - virtual start address of region
+  *	- size    - size in question
+  */
+-__dma_clean_area:
++ENTRY(__dma_clean_area)
+ 	dcache_by_line_op cvac, sy, x0, x1, x2, x3
+ 	ret
+ ENDPIPROC(__clean_dcache_area_poc)
+diff --git a/arch/arm64/mm/flush.c b/arch/arm64/mm/flush.c
+index fc5707f67ff5..e759f602d81d 100644
+--- a/arch/arm64/mm/flush.c
++++ b/arch/arm64/mm/flush.c
+@@ -77,6 +77,8 @@ EXPORT_SYMBOL(flush_dcache_page);
+  */
+ EXPORT_SYMBOL(flush_cache_all);
+ EXPORT_SYMBOL(__flush_icache_range);
++EXPORT_SYMBOL(__dma_inv_area);
++EXPORT_SYMBOL(__dma_clean_area);
+ 
+ #ifdef CONFIG_ARCH_HAS_PMEM_API
+ void arch_wb_cache_pmem(void *addr, size_t size)
+-- 
+2.25.1
+

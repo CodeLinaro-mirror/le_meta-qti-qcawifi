@@ -12,4 +12,5 @@ RDEPENDS_packagegroup-qti-qcawifi = " \
          iw \
          roxml \
          wireless-tools \
+	 qca-cnss\
          "
