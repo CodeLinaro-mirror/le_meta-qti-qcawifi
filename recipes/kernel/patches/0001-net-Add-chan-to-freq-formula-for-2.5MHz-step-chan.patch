@@ -1,0 +1,35 @@
+From 1d3ea4a1a6f0f6dc570171ef0f5e9ead07e68e05 Mon Sep 17 00:00:00 2001
+From: Qian Zhang <quic_zhangq@quicinc.com>
+Date: Wed, 14 Sep 2022 17:22:52 +0800
+Subject: [PATCH] net: Add chan to freq formula for 2.5MHz step chan
+
+Add channel to frequency conversion formula for
+2.5MHZ step channels in ieee80211_channel_to_frequency() API.
+This API is invoked by the driver when the frame is passed on
+to cfg80211 layer as a part of scan.
+
+Change-Id: I15e9f578c52afd7780cbab18aa09d461a14182d6
+CRs-Fixed: 3075358
+Signed-off-by:Qian Zhang <quic_zhangq@quicinc.com>
+---
+ net/wireless/util.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/net/wireless/util.c b/net/wireless/util.c
+index fb9e2d61a90a..5c09dbb20e4b 100644
+--- a/net/wireless/util.c
++++ b/net/wireless/util.c
+@@ -84,6 +84,10 @@ u32 ieee80211_channel_to_freq_khz(int chan, enum nl80211_band band)
+ 			return MHZ_TO_KHZ(2484);
+ 		else if (chan < 14)
+ 			return MHZ_TO_KHZ(2407 + chan * 5);
++		else if (chan >= 221 && chan <= 224)
++			return MHZ_TO_KHZ(2477 + (chan - 221) * 5);
++		else if (chan > 200)
++			return MHZ_TO_KHZ(2399 + (chan - 200) * 5);
+ 		break;
+ 	case NL80211_BAND_5GHZ:
+ 		if (chan >= 182 && chan <= 196)
+-- 
+2.25.1
+
