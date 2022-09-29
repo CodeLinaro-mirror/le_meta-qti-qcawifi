@@ -29,9 +29,6 @@ export CONFIG_BUILD_YOCTO="y"
 do_install_append() {
 	install -m 0755 -d ${D}/usr/include
 	cp ${S}/include/cnss2.h ${D}/usr/include/
-	install -d ${D}${nonarch_base_libdir}/modules/${KERNEL_VERSION}/extra
-	install -m 0755 ${S}/qca_cnss2.ko ${D}/${nonarch_base_libdir}/modules/${KERNEL_VERSION}/extra/
-
 	install -d ${D}/etc/modprobe.d/
 	install -m 0644 ${WORKDIR}/blacklist-qcacnss.conf ${D}/etc/modprobe.d/
 }
