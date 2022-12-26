@@ -1,0 +1,29 @@
+From 8c23177601b76e9bed5540297750f7e2aee4e198 Mon Sep 17 00:00:00 2001
+From: Miaoqing Pan <quic_miaoqing@quicinc.com>
+Date: Fri, 23 Dec 2022 15:10:51 +0800
+Subject: [PATCH] arm64: export bss section symbols
+
+Export symbol __bss_start and __bss_stop.
+
+Change-Id: Ice38991a0388382875a2b50e53f76d085928bbdf
+Signed-off-by: Miaoqing Pan <quic_miaoqing@quicinc.com>
+---
+ arch/arm64/kernel/head.S | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+index 23a4b53..9d9a1e4 100644
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -479,6 +479,8 @@ ENDPROC(__primary_switched)
+ ENTRY(kimage_vaddr)
+ 	.quad		_text - TEXT_OFFSET
+ EXPORT_SYMBOL(kimage_vaddr)
++EXPORT_SYMBOL(__bss_start)
++EXPORT_SYMBOL(__bss_stop)
+ 
+ /*
+  * If we're fortunate enough to boot at EL2, ensure that the world is
+-- 
+2.7.4
+
