@@ -1,9 +1,9 @@
 DESCRIPTION = "QCA CNSS Wifi Platform Driver"
 
 FILESPATH =+ "${WORKSPACE}:"
-FILESEXTRAPATHS_prepend := "${THISDIR}/files:"
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
-LICENSE = "GPL-2.0"
+LICENSE = "GPL-2.0-only"
 LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/${LICENSE};md5=801f80980d171dd6425610833a22dbe6"
 
 inherit autotools-brokensep module qperf
@@ -15,8 +15,8 @@ SRC_URI += "file://blacklist-qcacnss.conf"
 
 S = "${WORKDIR}/qcawifi/qca-cnss"
 
-FILES_${PN}+="/usr/lib/modules/${KERNEL_VERSION}/extra/"
-FILES_${PN}+="/etc/modprobe.d/*"
+FILES:${PN}+="/usr/lib/modules/${KERNEL_VERSION}/extra/"
+FILES:${PN}+="/etc/modprobe.d/*"
 
 EXTRA_OEMAKE += "TARGET_SUPPORT=${BASEMACHINE}"
 
@@ -26,7 +26,7 @@ EXTRA_OECONF += "--with-kernel-src=${STAGING_KERNEL_DIR} \
 
 export CONFIG_BUILD_YOCTO="y"
 
-do_install_append() {
+do_install:append() {
 	install -m 0755 -d ${D}/usr/include
 	cp ${S}/include/cnss2.h ${D}/usr/include/
 	install -d ${D}/etc/modprobe.d/

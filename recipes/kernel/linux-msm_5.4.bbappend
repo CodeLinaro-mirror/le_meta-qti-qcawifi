@@ -1,4 +1,4 @@
-FILESEXTRAPATHS_append := "${THISDIR}:${THISDIR}/patches:"
+FILESEXTRAPATHS:append := "${THISDIR}:${THISDIR}/patches:"
 
 SRC_URI += "file://0001-ANDROID-GKI-arm64-provide-dma-cache-routines.patch \
             file://0002-cfg80211-obtain-sae_pwe-value-from-userspace.patch \

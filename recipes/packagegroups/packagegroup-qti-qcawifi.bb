@@ -8,7 +8,7 @@ PROVIDES = "${PACKAGES}"
 
 PACKAGES = "packagegroup-qti-qcawifi"
 
-RDEPENDS_packagegroup-qti-qcawifi = " \
+RDEPENDS:packagegroup-qti-qcawifi = " \
          iw \
          roxml \
          wireless-tools \
