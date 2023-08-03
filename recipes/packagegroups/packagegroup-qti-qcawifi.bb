@@ -11,6 +11,5 @@ PACKAGES = "packagegroup-qti-qcawifi"
 RDEPENDS:packagegroup-qti-qcawifi = " \
          iw \
          roxml \
-         wireless-tools \
-	 ${@bb.utils.contains('BASEMACHINE', 'qcs40x', '', 'qca-cnss', d)} \
+         ${@bb.utils.contains('BASEMACHINE', 'qcs40x', '', 'qca-cnss', d)} \
          "
