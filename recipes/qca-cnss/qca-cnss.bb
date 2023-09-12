@@ -50,7 +50,7 @@ do_compile() {
     OUT_DIR=${WORKDIR}/out/${KERNEL_DEFCONFIG} \
     INPLACE_COMPILE=y \
     KERNEL_UAPI_HEADERS_DIR=${STAGING_KERNEL_BUILDDIR} \
-    sh ./build/build_module.sh \
+    ./build/build_module.sh
 }
 
 do_install:append() {
