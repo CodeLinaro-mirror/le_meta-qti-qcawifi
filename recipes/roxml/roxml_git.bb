@@ -6,10 +6,10 @@ HOMEPAGE    = "http://www.libroxml.net/"
 LICENSE     = "LGPL-2.1+"
 LIC_FILES_CHKSUM += "file://License.txt;md5=81cba52d2de829c8be3d167618e6b8b6"
 
-FILES_${PN} += "/usr/lib/*"
-FILES_${PN} += "/usr/include/*.h"
+FILES:${PN} += "/usr/lib/*"
+FILES:${PN} += "/usr/include/*.h"
 FILES_SOLIBSDEV = ""
-INSANE_SKIP_${PN} += "dev-so"
+INSANE_SKIP:${PN} += "dev-so installed-vs-shipped"
 
 PKG_NAME = "libroxml"
 PKG_VERSION = "2.3.0"
