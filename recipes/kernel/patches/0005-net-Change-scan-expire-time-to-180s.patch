@@ -1,0 +1,32 @@
+From e138eb60e37018d211412714157dad42df08a3c1 Mon Sep 17 00:00:00 2001
+From: Qian Zhang <quic_zhangq@quicinc.com>
+Date: Thu, 16 Nov 2023 14:10:33 +0800
+Subject: [PATCH] net: Change scan expire time to 180s
+
+There are 256+ channels for full channel scan when 5/10M
+mode is enabled. The scan process would take more than
+90s, so the ealier scan result would be dropped by the
+kernel. Change IEEE80211_SCAN_RESULT_EXPIRE to 180s.
+
+Signed-off-by: Qian Zhang <quic_zhangq@quicinc.com>
+CRs-Fixed: 3665282
+---
+ net/wireless/scan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/wireless/scan.c b/net/wireless/scan.c
+index f381c18da..38e59e1d2 100644
+--- a/net/wireless/scan.c
++++ b/net/wireless/scan.c
+@@ -72,7 +72,7 @@ module_param(bss_entries_limit, int, 0644);
+ MODULE_PARM_DESC(bss_entries_limit,
+                  "limit to number of scan BSS entries (per wiphy, default 1000)");
+ 
+-#define IEEE80211_SCAN_RESULT_EXPIRE	(30 * HZ)
++#define IEEE80211_SCAN_RESULT_EXPIRE	(180 * HZ)
+ 
+ static void bss_free(struct cfg80211_internal_bss *bss)
+ {
+-- 
+2.25.1
+
