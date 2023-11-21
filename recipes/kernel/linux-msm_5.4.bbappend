@@ -6,4 +6,5 @@ SRC_URI += "file://0001-ANDROID-GKI-arm64-provide-dma-cache-routines.patch \
             file://0001-net-Add-chan-to-freq-formula-for-2.5MHz-step-chan.patch \
             file://0004-arm64-export-bss-section-symbols.patch \
             file://0002-net-Add-chan-to-freq-formula-for-new-added-channel.patch \
+            file://0005-net-Change-scan-expire-time-to-180s.patch \
 "
