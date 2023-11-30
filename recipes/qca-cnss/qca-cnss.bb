@@ -36,7 +36,7 @@ export CONFIG_BUILD_YOCTO="y"
 KERNEL_VERSION = "${@get_kernelversion_file("${STAGING_KERNEL_BUILDDIR}")}"
 EXT_MODULES = "${@os.path.relpath("${S}", "${KERNEL_PLATFORM_PATH}")}"
 
-MODULE_NAME = "qca-cnss2.ko"
+MODULE_NAME = "qca_cnss2.ko"
 
 do_compile[depends] += "virtual/kernel:do_shared_workdir"
 do_compile[cleandirs] += "${WORKDIR}/out/${KERNEL_DEFCONFIG}"
