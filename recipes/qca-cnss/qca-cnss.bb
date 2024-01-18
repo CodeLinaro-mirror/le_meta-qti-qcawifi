@@ -61,3 +61,10 @@ do_install:append() {
 	install -d ${D}/etc/modprobe.d/
 	install -m 0644 ${WORKDIR}/blacklist-qcacnss.conf ${D}/etc/modprobe.d/
 }
+
+do_deploy() {
+    install -d ${DEPLOYDIR}/kernel_modules
+    install -m 0755 ${S}/${MODULE_NAME} ${DEPLOYDIR}/kernel_modules
+}
+
+addtask do_deploy after do_install
