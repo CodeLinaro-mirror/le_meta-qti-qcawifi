@@ -1,0 +1,151 @@
+From 4e2219c74f697c0ad997d3b93f7798e0a80791dc Mon Sep 17 00:00:00 2001
+From: sivaraman <quic_sivad@quicinc.com>
+Date: Sun, 21 Jan 2024 13:59:06 +0530
+Subject: [PATCH] bridge: add api to update fdb
+
+Ping latency is huge, and duplicates are seen with 6 Mesh nodes
+or more in same range.
+
+Add the br_fdb api to add/update the bridge table entry as
+per the iot drone mesh metric update and invoked it
+accordingly.
+
+Change-Id: Id26f70078405c866aebe1df00239f6825e49d040
+Signed-off-by: Qian Zhang <quic_zhangq@quicinc.com>
+---
+ include/linux/if_bridge.h |  3 ++
+ net/bridge/br_fdb.c       | 93 +++++++++++++++++++++++++++++++++++++++
+ net/bridge/br_private.h   |  2 +
+ 3 files changed, 98 insertions(+)
+
+diff --git a/include/linux/if_bridge.h b/include/linux/if_bridge.h
+index 6009f14c9cfc..e21a2ad9fbf3 100644
+--- a/include/linux/if_bridge.h
++++ b/include/linux/if_bridge.h
+@@ -56,6 +56,9 @@ extern void brioctl_set(int (*ioctl_hook)(struct net *, unsigned int, void __use
+ extern struct net_device *br_port_dev_get(struct net_device *dev,
+ 						unsigned char *addr);
+ #endif
++extern bool br_is_hairpin_enabled(struct net_device *dev);
++extern void br_add_or_refresh_fdb_entry_by_netdev(struct net_device *dev,
++						const char *addr);
+ 
+ #if IS_ENABLED(CONFIG_BRIDGE) && IS_ENABLED(CONFIG_BRIDGE_IGMP_SNOOPING)
+ int br_multicast_list_adjacent(struct net_device *dev,
+diff --git a/net/bridge/br_fdb.c b/net/bridge/br_fdb.c
+index b1d3248c0252..a7246bd029b7 100644
+--- a/net/bridge/br_fdb.c
++++ b/net/bridge/br_fdb.c
+@@ -1211,3 +1211,96 @@ void br_fdb_clear_offload(const struct net_device *dev, u16 vid)
+ 	spin_unlock_bh(&p->br->hash_lock);
+ }
+ EXPORT_SYMBOL_GPL(br_fdb_clear_offload);
++
++static void fdb_add_hw_addr_by_user(struct net_bridge *br, const unsigned char *addr)
++{
++	int err;
++	struct net_bridge_port *p;
++
++	list_for_each_entry(p, &br->port_list, list) {
++		if (!br_promisc_port(p)) {
++			err = dev_uc_add(p->dev, addr);
++			if (err)
++				goto undo;
++		}
++	}
++
++	return;
++undo:
++	list_for_each_entry_continue_reverse(p, &br->port_list, list) {
++		if (!br_promisc_port(p))
++			dev_uc_del(p->dev, addr);
++	}
++}
++
++
++void br_fdb_update_by_user(struct net_bridge *br, struct net_bridge_port *source,
++                   const unsigned char *addr, u16 vid, bool added_by_user)
++{
++	struct net_bridge_fdb_entry *fdb;
++	bool fdb_modified = false;
++
++	fdb = fdb_find_rcu(&br->fdb_hash_tbl, addr, vid);
++	if (likely(fdb)) {
++		/* attempt to update an entry for a local interface */
++		if (unlikely(fdb->is_local)) {
++			if (net_ratelimit())
++				br_warn(br, "received packet on %s with own address as source address (addr:%pM, vlan:%u)\n",
++					source->dev->name, addr, vid);
++		} else {
++			unsigned long now = jiffies;
++
++			/* fastpath: update of existing entry */
++			if (unlikely(source != fdb->dst && !fdb->is_sticky)) {
++				fdb->dst = source;
++				fdb_modified = true;
++				/* Take over HW learned entry */
++				if (unlikely(fdb->added_by_external_learn))
++					fdb->added_by_external_learn = 0;
++			}
++			if (now != fdb->updated)
++				fdb->updated = now;
++			if (unlikely(added_by_user))
++				fdb->added_by_user = 1;
++			if (unlikely(fdb_modified)) {
++				trace_br_fdb_update(br, source, addr, vid, added_by_user);
++				fdb_notify(br, fdb, RTM_NEWNEIGH, true);
++			}
++		}
++	} else {
++		spin_lock(&br->hash_lock);
++		fdb = fdb_create(br, source, addr, vid, 0, 0);
++		if (fdb) {
++			if (unlikely(added_by_user))
++				fdb->added_by_user = 1;
++			fdb->is_static = 1;
++			fdb_add_hw_addr_by_user(br, addr);
++			trace_br_fdb_update(br, source, addr, vid,
++					    added_by_user);
++			fdb_notify(br, fdb, RTM_NEWNEIGH, true);
++		}
++		/* else  we lose race and someone else inserts
++		 * it first, don't bother updating
++		 */
++		spin_unlock(&br->hash_lock);
++	}
++}
++
++void br_add_or_refresh_fdb_entry_by_netdev(struct net_device *dev, const char *addr)
++{
++	struct net_bridge_port *p = br_port_get_rcu(dev);
++
++	if (!p)
++		return;
++
++	if (!is_valid_ether_addr(addr)) {
++		pr_info("bridge: Attempt to refresh with invalid ether address %pM\n",
++			addr);
++		return;
++	}
++
++	rcu_read_lock();
++	br_fdb_update_by_user(p->br, p, addr, 0, true);
++	rcu_read_unlock();
++}
++EXPORT_SYMBOL_GPL(br_add_or_refresh_fdb_entry_by_netdev);
+diff --git a/net/bridge/br_private.h b/net/bridge/br_private.h
+index c83d3a954b5f..4228155fc55c 100644
+--- a/net/bridge/br_private.h
++++ b/net/bridge/br_private.h
+@@ -706,6 +706,8 @@ void br_mdb_init(void);
+ void br_mdb_uninit(void);
+ void br_multicast_host_join(struct net_bridge_mdb_entry *mp, bool notify);
+ void br_multicast_host_leave(struct net_bridge_mdb_entry *mp, bool notify);
++void br_fdb_update_by_user(struct net_bridge *br, struct net_bridge_port *source,
++		   const unsigned char *addr, u16 vid, bool added_by_user);
+ 
+ #define mlock_dereference(X, br) \
+ 	rcu_dereference_protected(X, lockdep_is_held(&br->multicast_lock))
+-- 
+2.25.1
+
