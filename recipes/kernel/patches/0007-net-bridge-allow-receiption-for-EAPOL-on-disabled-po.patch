@@ -1,0 +1,41 @@
+From eac83b808a74e4fca71791e787dcf6619c52d09d Mon Sep 17 00:00:00 2001
+From: Qian Zhang <quic_zhangq@quicinc.com>
+Date: Tue, 16 Apr 2024 18:21:28 +0800
+Subject: [PATCH] net: bridge: allow receiption for EAPOL on disabled port
+
+When a wireless STA interface is bound to bridge, its state
+is disabled before associating with AP. All data packets to
+the STA port will be dropped. 4-way handshake will fail because
+wpa-supplicant could not receive the M1 message.
+
+Change-Id: I777ef2c76564bb7e29a63636afd6efe814c606f0
+Signed-off-by: Qian Zhang <quic_zhangq@quicinc.com>
+---
+ net/bridge/br_input.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/net/bridge/br_input.c b/net/bridge/br_input.c
+index 464f6a619..2e6b50f2b 100644
+--- a/net/bridge/br_input.c
++++ b/net/bridge/br_input.c
+@@ -347,6 +347,17 @@ rx_handler_result_t br_handle_frame(struct sk_buff **pskb)
+ 
+ forward:
+ 	switch (p->state) {
++	case BR_STATE_DISABLED:
++		if (skb->protocol == htons(ETH_P_PAE)) {
++ 			if (ether_addr_equal(p->br->dev->dev_addr, dest))
++ 				skb->pkt_type = PACKET_HOST;
++ 
++ 			BR_INPUT_SKB_CB(skb)->brdev = p->br->dev;
++			BR_INPUT_SKB_CB(skb)->src_port_isolated = !!(p->flags & BR_ISOLATED);
++ 			br_pass_frame_up(skb);
++ 			break;
++ 		}
++ 		goto drop;
+ 	case BR_STATE_FORWARDING:
+ 	case BR_STATE_LEARNING:
+ 		if (ether_addr_equal(p->br->dev->dev_addr, dest))
+-- 
+2.25.1
+

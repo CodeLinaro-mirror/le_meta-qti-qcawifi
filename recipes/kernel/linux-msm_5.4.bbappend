@@ -8,6 +8,7 @@ PATCHES = " file://0001-ANDROID-GKI-arm64-provide-dma-cache-routines.patch \
            file://0002-net-Add-chan-to-freq-formula-for-new-added-channel.patch \
            file://0005-net-Change-scan-expire-time-to-180s.patch \
            file://0006-bridge-add-api-to-update-fdb.patch \
+           file://0007-net-bridge-allow-receiption-for-EAPOL-on-disabled-po.patch \
 "
 
 SRC_URI += "${@bb.utils.contains('MACHINE_FEATURES', 'qca-wifi', '${PATCHES}', '', d)}"
