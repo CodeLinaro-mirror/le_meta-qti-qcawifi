@@ -9,7 +9,7 @@ PROVIDES = "${PACKAGES}"
 PACKAGES = "packagegroup-qti-qcawifi"
 
 RDEPENDS:packagegroup-qti-qcawifi = " \
-         iw \
+         iw-w \
          roxml \
          ${@bb.utils.contains('BASEMACHINE', 'qcs40x', '', 'qca-cnss', d)} \
          "
