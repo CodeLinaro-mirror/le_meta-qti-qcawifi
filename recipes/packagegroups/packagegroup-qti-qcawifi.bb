@@ -7,13 +7,14 @@ inherit packagegroup
 PROVIDES = "${PACKAGES}"
 
 CFG80211W = ""
-CFG80211W:append:kalama:ubuntu = "cfg80211w"
+CFG80211W:append:sun:linux = "cfg80211w"
 
 PACKAGES = "packagegroup-qti-qcawifi"
 
 RDEPENDS:packagegroup-qti-qcawifi = " \
+         tcpdump \
          iw-w \
          roxml \
-         ${@bb.utils.contains('BASEMACHINE', 'qcs40x', '', 'qca-cnss', d)} \
+         qca-cnss \
          ${CFG80211W} \
          "

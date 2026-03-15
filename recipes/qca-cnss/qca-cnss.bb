@@ -20,7 +20,7 @@ S = "${WORKDIR}/qcawifi/qca-cnss"
 
 FILES:${PN} += "/usr/include/*"
 FILES:${PN} += "/etc/modprobe.d/*"
-FILES:${PN} += "lib/modules/${KERNEL_VERSION}/extra/*.ko"
+FILES:${PN} += "${nonarch_base_libdir}/modules/${KERNEL_VERSION}/extra/*.ko"
 
 EXTRA_OEMAKE += "TARGET_SUPPORT=${BASEMACHINE}"
 EXTRA_OEMAKE += "KBUILD_EXTRA_SYMBOLS=${KBUILD_EXTRA_SYMBOLS}"
@@ -32,6 +32,10 @@ EXTRA_OECONF += "--with-kernel-src=${STAGING_KERNEL_DIR} \
                  --with-sanitized-headers=${STAGING_KERNEL_BUILDDIR}/usr/include"
 
 export CONFIG_BUILD_YOCTO="y"
+export QCA_CNSS_DEBUG_SUPPORT="y"
+export QCA_CNSS_LINUX_6_x_SUPPORT="y"
+export QCA_CNSS_PCI_SUPPORT="y"
+export CONFIG_IOT_DRONE_WIFI="y"
 
 KERNEL_VERSION = "${@get_kernelversion_file("${STAGING_KERNEL_BUILDDIR}")}"
 EXT_MODULES = "${@os.path.relpath("${S}", "${KERNEL_PLATFORM_PATH}")}"
@@ -60,4 +64,6 @@ do_install:append() {
 	cp ${S}/include/cnss2.h ${D}/usr/include/
 	install -d ${D}/etc/modprobe.d/
 	install -m 0644 ${WORKDIR}/blacklist-qcacnss.conf ${D}/etc/modprobe.d/
+	install ${S}/Module.symvers -D ${D}${base_libdir}/modules/${KERNEL_VERSION}/qca_cnss2/Module.symvers
 }
+FILES:${PN} += "${nonarch_base_libdir}/modules/${KERNEL_VERSION}/*"

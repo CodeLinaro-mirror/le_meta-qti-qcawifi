@@ -1,0 +1,1820 @@
+From e9b00293eb47a3f7bee241dbdf60beb7745ccd28 Mon Sep 17 00:00:00 2001
+From: Hangtian Zhu <hangtian@qti.qualcomm.com>
+Date: Tue, 17 Mar 2026 19:02:25 +0800
+Subject: [PATCH] cfg80211w: CFG80211_PROP_MULTI_LINK_SUPPORT changes for
+ kernel 6.6
+
+Add CFG80211_PROP_MULTI_LINK_SUPPORT changes for kernel 6.6, to adapt
+Waikiki MLO driver implementations on msm-6.6 kernel.
+
+Changes copied from:
+https://git.codelinaro.org/clo/qsdk/oss/kernel/linux-ipq-6.6/-/tree/eb2daa12ed16878aaede529731312bce40358da8
+
+Signed-off-by: Hangtian Zhu <hangtian@qti.qualcomm.com>
+---
+ include/net/cfg80211.h       | 163 ++++++++++
+ include/uapi/linux/nl80211.h |  72 +++++
+ net/wireless/ap.c            |  25 +-
+ net/wireless/core.c          | 148 ++++++++-
+ net/wireless/core.h          |   8 +-
+ net/wireless/nl80211.c       | 563 ++++++++++++++++++++++++++++++++++-
+ net/wireless/rdev-ops.h      |  19 ++
+ net/wireless/sme.c           |   8 +-
+ net/wireless/trace.h         |  62 ++++
+ net/wireless/util.c          | 164 +++++++++-
+ 10 files changed, 1209 insertions(+), 23 deletions(-)
+
+diff --git a/include/net/cfg80211.h b/include/net/cfg80211.h
+index 9e07d44..1cf816e 100644
+--- a/include/net/cfg80211.h
++++ b/include/net/cfg80211.h
+@@ -715,6 +715,10 @@ struct vif_params {
+ 	u8 macaddr[ETH_ALEN];
+ 	const u8 *vht_mumimo_groups;
+ 	const u8 *vht_mumimo_follow_addr;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	char *radio_iface;
++	u8 mld_macaddr[ETH_ALEN];
++#endif
+ };
+ 
+ /**
+@@ -1408,6 +1412,10 @@ struct cfg80211_ap_settings {
+ 	struct cfg80211_unsol_bcast_probe_resp unsol_bcast_probe_resp;
+ 	struct cfg80211_mbssid_config mbssid_config;
+ 	u16 punct_bitmap;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	bool reconfig;
++	bool afc;
++#endif
+ 
+ 	ANDROID_KABI_RESERVE(1);
+ };
+@@ -1443,6 +1451,9 @@ struct cfg80211_csa_settings {
+ 	bool block_tx;
+ 	u8 count;
+ 	u16 punct_bitmap;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	u8 link_id;
++#endif
+ 
+ 	ANDROID_KABI_RESERVE(1);
+ };
+@@ -1486,6 +1497,9 @@ struct cfg80211_color_change_settings {
+  *	the verification
+  */
+ struct iface_combination_params {
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	int radio_idx;
++#endif
+ 	int num_different_channels;
+ 	u8 radar_detect;
+ 	int iftype_num[NUM_NL80211_IFTYPES];
+@@ -2948,6 +2962,10 @@ struct cfg80211_auth_request {
+  */
+ struct cfg80211_assoc_link {
+ 	struct cfg80211_bss *bss;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	const u8 *bssid;
++	unsigned int freq;
++#endif
+ 	const u8 *elems;
+ 	size_t elems_len;
+ 	bool disabled;
+@@ -3253,10 +3271,35 @@ struct cfg80211_connect_params {
+ 	size_t fils_erp_rrk_len;
+ 	bool want_1x;
+ 	struct ieee80211_edmg edmg;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	struct cfg80211_assoc_link links[IEEE80211_MLD_MAX_NUM_LINKS];
++	const u8 *ap_mld_addr;
++	s8 link_id;
++#endif
+ 
+ 	ANDROID_KABI_RESERVE(1);
+ };
+ 
++
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++/**
++ * struct cfg80211_link_reconfig_removal_params - Contains params needed for
++ * link reconfig removal
++ * @link_removal_cntdown: TBTT countdown value until which the beacon with ML
++ *	reconfigure IE will be sent.
++ * @ie: ML reconfigure IE to be updated in beacon in the link going to be
++ *	removed and in all affiliated links.
++ * @ie_len: ML reconfigure IE length
++ * @link_id: Link id of the link to be removed.
++ */
++struct cfg80211_link_reconfig_removal_params {
++	u16 link_removal_cntdown;
++	const u8 *ie;
++	size_t ie_len;
++	unsigned int link_id;
++};
++#endif
++
+ /**
+  * enum cfg80211_connect_params_changed - Connection parameters being updated
+  *
+@@ -4827,6 +4870,11 @@ struct cfg80211_ops {
+ 				    struct cfg80211_set_hw_timestamp *hwts);
+ 	int	(*set_ttlm)(struct wiphy *wiphy, struct net_device *dev,
+ 			    struct cfg80211_ttlm_params *params);
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	int	(*link_reconfig_remove)(struct wiphy *wiphy,
++		struct net_device *dev,
++		const struct cfg80211_link_reconfig_removal_params *params);
++#endif
+ 
+ 	ANDROID_KABI_RESERVE(1);
+ 	ANDROID_KABI_RESERVE(2);
+@@ -5297,6 +5345,40 @@ struct wiphy_iftype_akm_suites {
+ 	int n_akm_suites;
+ };
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++/**
++ * struct wiphy_radio_freq_range - wiphy frequency range
++ * @start_freq:  start range edge frequency (kHz)
++ * @end_freq:    end range edge frequency (kHz)
++ */
++struct wiphy_radio_freq_range {
++	u32 start_freq;
++	u32 end_freq;
++};
++
++
++/**
++ * struct wiphy_radio - physical radio of a wiphy
++ * This structure describes a physical radio belonging to a wiphy.
++ * It is used to describe concurrent-channel capabilities. Only one channel
++ * can be active on the radio described by struct wiphy_radio.
++ *
++ * @freq_range: frequency range that the radio can operate on.
++ * @n_freq_range: number of elements in @freq_range
++ *
++ * @iface_combinations: Valid interface combinations array, should not
++ *	list single interface types.
++ * @n_iface_combinations: number of entries in @iface_combinations array.
++ */
++struct wiphy_radio {
++	const struct wiphy_radio_freq_range *freq_range;
++	int n_freq_range;
++
++	const struct ieee80211_iface_combination *iface_combinations;
++	int n_iface_combinations;
++};
++#endif
++
+ #define CFG80211_HW_TIMESTAMP_ALL_PEERS	0xffff
+ 
+ /**
+@@ -5665,6 +5747,11 @@ struct wiphy {
+ 
+ 	u16 hw_timestamp_max_peers;
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	int n_radio;
++	const struct wiphy_radio *radio;
++#endif
++
+ 	ANDROID_KABI_RESERVE(1);
+ 
+ 	char priv[] __aligned(NETDEV_ALIGN);
+@@ -6170,6 +6257,9 @@ struct wireless_dev {
+ 		};
+ 	} links[IEEE80211_MLD_MAX_NUM_LINKS];
+ 	u16 valid_links;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	u16 fallback_valid_links;
++#endif
+ 
+ 	ANDROID_KABI_RESERVE(1);
+ 	ANDROID_KABI_RESERVE(2);
+@@ -6219,6 +6309,15 @@ static inline void WARN_INVALID_LINK_ID(struct wireless_dev *wdev,
+ 		!(wdev->valid_links & BIT(link_id)));
+ }
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++#define for_each_fallback_valid_link(link_info, link_id)		\
++	for ((link_id) = 0;						\
++	     (link_id) < ((link_info)->fallback_valid_links ?		\
++			ARRAY_SIZE((link_info)->links) : 0);		\
++	     (link_id)++)						\
++		if (!(link_info)->fallback_valid_links ||		\
++		    ((link_info)->fallback_valid_links & BIT(link_id)))
++#endif
+ #define for_each_valid_link(link_info, link_id)			\
+ 	for (link_id = 0;					\
+ 	     link_id < ((link_info)->valid_links ?		\
+@@ -7843,6 +7942,9 @@ struct cfg80211_connect_resp_params {
+ 
+ 	const u8 *ap_mld_addr;
+ 	u16 valid_links;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	u16 fallback_valid_links;
++#endif
+ 	struct {
+ 		const u8 *addr;
+ 		const u8 *bssid;
+@@ -8318,6 +8420,9 @@ struct cfg80211_tx_status {
+ 	const u8 *buf;
+ 	size_t len;
+ 	bool ack;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	int link_id;
++#endif
+ };
+ 
+ /**
+@@ -8346,6 +8451,23 @@ void cfg80211_mgmt_tx_status_ext(struct wireless_dev *wdev,
+  * transmitted with cfg80211_ops::mgmt_tx() to report the TX status of the
+  * transmission attempt.
+  */
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++static inline void cfg80211_mgmt_tx_status(struct wireless_dev *wdev,
++					   u64 cookie, const u8 *buf,
++					   size_t len, bool ack, int link_id,
++					   gfp_t gfp)
++{
++	struct cfg80211_tx_status status = {
++		.cookie = cookie,
++		.buf = buf,
++		.len = len,
++		.ack = ack,
++		.link_id = link_id
++	};
++
++	cfg80211_mgmt_tx_status_ext(wdev, &status, gfp);
++}
++#else
+ static inline void cfg80211_mgmt_tx_status(struct wireless_dev *wdev,
+ 					   u64 cookie, const u8 *buf,
+ 					   size_t len, bool ack, gfp_t gfp)
+@@ -8359,6 +8481,7 @@ static inline void cfg80211_mgmt_tx_status(struct wireless_dev *wdev,
+ 
+ 	cfg80211_mgmt_tx_status_ext(wdev, &status, gfp);
+ }
++#endif
+ 
+ /**
+  * cfg80211_control_port_tx_status - notification of TX status for control
+@@ -9308,4 +9431,44 @@ bool cfg80211_valid_disable_subchannel_bitmap(u16 *bitmap,
+  */
+ void cfg80211_links_removed(struct net_device *dev, u16 link_mask);
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++enum ieee80211_link_reconfig_remove_state {
++	IEEE80211_LINK_RECONFIG_START,
++	IEEE80211_LINK_RECONFIG_COMPLETE,
++};
++
++/**
++ * cfg80211_update_link_reconfig_remove_status - Inform userspace about
++ *	the removal status of link which is scheduled for removal
++ * @dev: the device on which the operation is requested
++ * @link_id: Link which is undergoing removal
++ * @tbtt_count: Current tbtt_count to be updated.
++ * @tsf: Beacon's timestamp value
++ * @bcn_intr: Beacon interval value
++ * @status: Inform started or completed action to userspace based on the value
++ *	received,
++ *	i) 0 (IEEE80211_LINK_RECONFIG_START) - Send
++ *		NL80211_CMD_LINK_REMOVAL_STARTED
++ *	ii) 1 (IEEE80211_LINK_RECONFIG_COMPLETE) - Send
++ *		NL80211_CMD_LINK_REMOVAL_COMPLETED
++ *
++ *
++ * This function is used to inform userspace about the ongoing link removal
++ * status. 'IEEE80211_LINK_RECONFIG_START' is issued when the first beacon with
++ * ML reconfigure IE is sent out. This event can be used by userspace to start
++ * the BTM in case of AP mode. And, IEEE80211_LINK_RECONFIG_COMPLETE is issued
++ * when the last beacon is sent with ML reconfigure IE. This is used to
++ * initiate the deletion of that link, also to trigger deauth/disassoc for the
++ * associated peer(s).
++ *
++ * Note: This API is currently used by drivers which supports offloaded
++ * Multi-Link reconfigure link removal. Returns failure if FEATURE FLAG is not
++ * set or success if NL message is sent.
++ */
++int
++cfg80211_update_link_reconfig_remove_status(struct net_device *dev,
++					    unsigned int link_id,
++					    u16 tbtt_count, u64 tsf, u32 bcn_intr,
++					    enum ieee80211_link_reconfig_remove_state action);
++#endif
+ #endif /* __NET_CFG80211_H */
+diff --git a/include/uapi/linux/nl80211.h b/include/uapi/linux/nl80211.h
+index 8315d0f..6661d2b 100644
+--- a/include/uapi/linux/nl80211.h
++++ b/include/uapi/linux/nl80211.h
+@@ -1586,6 +1586,11 @@ enum nl80211_commands {
+ 
+ 	NL80211_CMD_SET_TID_TO_LINK_MAPPING,
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	NL80211_CMD_LINK_REMOVAL_STARTED,
++
++	NL80211_CMD_LINK_REMOVAL_COMPLETED,
++#endif
+ 	/* add new commands above here */
+ 
+ 	/* used to define NL80211_CMD_MAX below */
+@@ -3388,6 +3393,15 @@ enum nl80211_attrs {
+ 	NL80211_ATTR_MLO_TTLM_DLINK,
+ 	NL80211_ATTR_MLO_TTLM_ULINK,
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	NL80211_ATTR_WIPHY_RADIOS,
++	NL80211_ATTR_WIPHY_INTERFACE_COMBINATIONS,
++	NL80211_ATTR_AP_REMOVAL_COUNT,
++	NL80211_ATTR_TSF,
++	NL80211_ATTR_RADIO_IFACE = 350,
++	NL80211_ATTR_MLO_AP_RECONFIG,
++	NL80211_ATTR_MLO_AP_AFC,
++#endif
+ 	/* add attributes here, update the policy in nl80211.c */
+ 
+ 	__NL80211_ATTR_AFTER_LAST,
+@@ -4283,6 +4297,9 @@ enum nl80211_frequency_attr {
+ 	NL80211_FREQUENCY_ATTR_NO_20MHZ,
+ 	NL80211_FREQUENCY_ATTR_NO_10MHZ,
+ 	NL80211_FREQUENCY_ATTR_WMM,
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	NL80211_FREQUENCY_ATTR_CHANNEL,
++#endif
+ 	NL80211_FREQUENCY_ATTR_NO_HE,
+ 	NL80211_FREQUENCY_ATTR_OFFSET,
+ 	NL80211_FREQUENCY_ATTR_1MHZ,
+@@ -6573,6 +6590,10 @@ enum nl80211_ext_feature_index {
+ 	NL80211_EXT_FEATURE_OWE_OFFLOAD,
+ 	NL80211_EXT_FEATURE_OWE_OFFLOAD_AP,
+ 	NL80211_EXT_FEATURE_DFS_CONCURRENT,
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	NL80211_EXT_FEATURE_MLD_LINK_REMOVAL_OFFLOAD,
++	NL80211_EXT_FEATURE_MLD_LINK_REMOVAL_BTM_OFFLOAD,
++#endif
+ 
+ 	/* add new features before the definition below */
+ 	NUM_NL80211_EXT_FEATURES,
+@@ -7942,4 +7963,55 @@ enum nl80211_ap_settings_flags {
+ 	NL80211_AP_SETTINGS_SA_QUERY_OFFLOAD_SUPPORT	= 1 << 1,
+ };
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++/**
++ * enum nl80211_wiphy_radio_attrs - wiphy radio attributes
++ *
++ * @__NL80211_WIPHY_RADIO_ATTR_INVALID: Invalid
++ *
++ * @NL80211_WIPHY_RADIO_ATTR_INDEX: Index of this radio (u32)
++ * @NL80211_WIPHY_RADIO_ATTR_FREQ_RANGE: Frequency range supported by this
++ *	radio. Attribute may be present multiple times.
++ * @NL80211_WIPHY_RADIO_ATTR_INTERFACE_COMBINATION: Supported interface
++ *	combination for this radio. Attribute may be present multiple times
++ *	and contains attributes defined in &enum nl80211_if_combination_attrs.
++ *
++ * @__NL80211_WIPHY_RADIO_ATTR_LAST: Internal
++ * @NL80211_WIPHY_RADIO_ATTR_MAX: Highest attribute
++ */
++enum nl80211_wiphy_radio_attrs {
++	__NL80211_WIPHY_RADIO_ATTR_INVALID,
++
++	NL80211_WIPHY_RADIO_ATTR_INDEX,
++	NL80211_WIPHY_RADIO_ATTR_FREQ_RANGE,
++	NL80211_WIPHY_RADIO_ATTR_INTERFACE_COMBINATION,
++
++	/* keep last */
++	__NL80211_WIPHY_RADIO_ATTR_LAST,
++	NL80211_WIPHY_RADIO_ATTR_MAX = __NL80211_WIPHY_RADIO_ATTR_LAST - 1,
++};
++
++/**
++ * enum nl80211_wiphy_radio_freq_range - wiphy radio frequency range
++ *
++ * @__NL80211_WIPHY_RADIO_FREQ_ATTR_INVALID: Invalid
++ *
++ * @NL80211_WIPHY_RADIO_FREQ_ATTR_START: Frequency range start (u32).
++ *	The unit is kHz.
++ * @NL80211_WIPHY_RADIO_FREQ_ATTR_END: Frequency range end (u32).
++ *	The unit is kHz.
++ *
++ * @__NL80211_WIPHY_RADIO_FREQ_ATTR_LAST: Internal
++ * @NL80211_WIPHY_RADIO_FREQ_ATTR_MAX: Highest attribute
++ */
++enum nl80211_wiphy_radio_freq_range {
++	__NL80211_WIPHY_RADIO_FREQ_ATTR_INVALID,
++
++	NL80211_WIPHY_RADIO_FREQ_ATTR_START,
++	NL80211_WIPHY_RADIO_FREQ_ATTR_END,
++
++	__NL80211_WIPHY_RADIO_FREQ_ATTR_LAST,
++	NL80211_WIPHY_RADIO_FREQ_ATTR_MAX = __NL80211_WIPHY_RADIO_FREQ_ATTR_LAST - 1,
++};
++#endif
+ #endif /* __LINUX_NL80211_H */
+diff --git a/net/wireless/ap.c b/net/wireless/ap.c
+index 0962770..829d209 100644
+--- a/net/wireless/ap.c
++++ b/net/wireless/ap.c
+@@ -13,10 +13,13 @@
+ 
+ static int ___cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 			       struct net_device *dev, unsigned int link_id,
+-			       bool notify)
++			       bool notify, struct genl_info *info)
+ {
+ 	struct wireless_dev *wdev = dev->ieee80211_ptr;
+ 	int err;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	struct cfg80211_ap_settings params = {0};
++#endif
+ 
+ 	ASSERT_WDEV_LOCK(wdev);
+ 
+@@ -30,6 +33,16 @@ static int ___cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 	if (!wdev->links[link_id].ap.beacon_interval)
+ 		return -ENOENT;
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	if (info && info->attrs[NL80211_ATTR_MLO_AP_RECONFIG])
++		params.reconfig =
++			nla_get_flag(info->attrs[NL80211_ATTR_MLO_AP_RECONFIG]);
++
++	if (info && info->attrs[NL80211_ATTR_MLO_AP_AFC])
++		params.afc =
++			nla_get_flag(info->attrs[NL80211_ATTR_MLO_AP_AFC]);
++#endif
++
+ 	err = rdev_stop_ap(rdev, dev, link_id);
+ 	if (!err) {
+ 		wdev->conn_owner_nlportid = 0;
+@@ -54,16 +67,16 @@ static int ___cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 
+ int __cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 		       struct net_device *dev, int link_id,
+-		       bool notify)
++		       bool notify, struct genl_info *info)
+ {
+ 	unsigned int link;
+ 	int ret = 0;
+ 
+ 	if (link_id >= 0)
+-		return ___cfg80211_stop_ap(rdev, dev, link_id, notify);
++		return ___cfg80211_stop_ap(rdev, dev, link_id, notify, info);
+ 
+ 	for_each_valid_link(dev->ieee80211_ptr, link) {
+-		int ret1 = ___cfg80211_stop_ap(rdev, dev, link, notify);
++		int ret1 = ___cfg80211_stop_ap(rdev, dev, link, notify, info);
+ 
+ 		if (ret1)
+ 			ret = ret1;
+@@ -75,13 +88,13 @@ int __cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 
+ int cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 		     struct net_device *dev, int link_id,
+-		     bool notify)
++		     bool notify, struct genl_info *info)
+ {
+ 	struct wireless_dev *wdev = dev->ieee80211_ptr;
+ 	int err;
+ 
+ 	wdev_lock(wdev);
+-	err = __cfg80211_stop_ap(rdev, dev, link_id, notify);
++	err = __cfg80211_stop_ap(rdev, dev, link_id, notify, info);
+ 	wdev_unlock(wdev);
+ 
+ 	return err;
+diff --git a/net/wireless/core.c b/net/wireless/core.c
+index f669398..e9097f0 100644
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -600,6 +600,142 @@ use_default_name:
+ }
+ EXPORT_SYMBOL(wiphy_new_nm);
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++static
++int wiphy_verify_iface_combinations(struct wiphy *wiphy,
++				    const struct ieee80211_iface_combination *iface_comb,
++				    int n_iface_comb,
++				    bool combined_radio)
++{
++	const struct ieee80211_iface_combination *c;
++	int i, j;
++
++	for (i = 0; i < n_iface_comb; i++) {
++		u32 cnt = 0;
++		u16 all_iftypes = 0;
++
++		c = &iface_comb[i];
++
++		/*
++		 * Combinations with just one interface aren't real,
++		 * however we make an exception for DFS.
++		 */
++		if (WARN_ON((c->max_interfaces < 2) && !c->radar_detect_widths))
++			return -EINVAL;
++
++		/* Need at least one channel */
++		if (WARN_ON(!c->num_different_channels))
++			return -EINVAL;
++
++		/* DFS only works on one channel. Avoid this check
++		 * for multi-radio global combination, since it hold
++		 * the capabilities of all radio combinations.
++		 */
++		if (!combined_radio &&
++		    WARN_ON(c->radar_detect_widths &&
++			    c->num_different_channels > 1))
++			return -EINVAL;
++
++		if (WARN_ON(!c->n_limits))
++			return -EINVAL;
++
++		for (j = 0; j < c->n_limits; j++) {
++			u16 types = c->limits[j].types;
++
++			/* interface types shouldn't overlap */
++			if (WARN_ON(types & all_iftypes))
++				return -EINVAL;
++			all_iftypes |= types;
++
++			if (WARN_ON(!c->limits[j].max))
++				return -EINVAL;
++
++			/* Shouldn't list software iftypes in combinations! */
++			if (WARN_ON(wiphy->software_iftypes & types))
++				return -EINVAL;
++
++			/* Only a single P2P_DEVICE can be allowed, avoid this
++			 * check for multi-radio global combination, since it
++			 * hold the capabilities of all radio combinations.
++			 */
++			if (!combined_radio &&
++			    WARN_ON(types & BIT(NL80211_IFTYPE_P2P_DEVICE) &&
++				    c->limits[j].max > 1))
++				return -EINVAL;
++
++			/* Only a single NAN can be allowed, avoid this
++			 * check for multi-radio global combination, since it
++			 * hold the capabilities of all radio combinations.
++			 */
++			if (!combined_radio &&
++			    WARN_ON(types & BIT(NL80211_IFTYPE_NAN) &&
++				    c->limits[j].max > 1))
++				return -EINVAL;
++
++			/*
++			 * This isn't well-defined right now. If you have an
++			 * IBSS interface, then its beacon interval may change
++			 * by joining other networks, and nothing prevents it
++			 * from doing that.
++			 * So technically we probably shouldn't even allow AP
++			 * and IBSS in the same interface, but it seems that
++			 * some drivers support that, possibly only with fixed
++			 * beacon intervals for IBSS.
++			 */
++			if (WARN_ON(types & BIT(NL80211_IFTYPE_ADHOC) &&
++				    c->beacon_int_min_gcd)) {
++				return -EINVAL;
++			}
++
++			cnt += c->limits[j].max;
++			/*
++			 * Don't advertise an unsupported type
++			 * in a combination.
++			 */
++			if (WARN_ON((wiphy->interface_modes & types) != types))
++				return -EINVAL;
++		}
++
++		if (WARN_ON(all_iftypes & BIT(NL80211_IFTYPE_WDS)))
++			return -EINVAL;
++
++		/* You can't even choose that many! */
++		if (WARN_ON(cnt < c->max_interfaces))
++			return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int wiphy_verify_combinations(struct wiphy *wiphy)
++{
++	int i, ret;
++	bool combined_radio = false;
++
++	if (wiphy->n_radio) {
++		for (i = 0; i < wiphy->n_radio; i++) {
++			const struct wiphy_radio *radio = &wiphy->radio[i];
++
++			ret = wiphy_verify_iface_combinations(wiphy,
++							      radio->iface_combinations,
++							      radio->n_iface_combinations,
++							      false);
++			if (ret)
++				return ret;
++		}
++
++		combined_radio = true;
++	}
++
++	ret = wiphy_verify_iface_combinations(wiphy,
++					      wiphy->iface_combinations,
++					      wiphy->n_iface_combinations,
++					      combined_radio);
++
++	return ret;
++}
++
++#else
+ static int wiphy_verify_combinations(struct wiphy *wiphy)
+ {
+ 	const struct ieee80211_iface_combination *c;
+@@ -689,6 +825,7 @@ static int wiphy_verify_combinations(struct wiphy *wiphy)
+ 
+ 	return 0;
+ }
++#endif
+ 
+ int wiphy_register(struct wiphy *wiphy)
+ {
+@@ -1255,7 +1392,8 @@ static void _cfg80211_unregister_wdev(struct wireless_dev *wdev,
+ 
+ 			curbss = wdev->links[link_id].client.current_bss;
+ 
+-			if (WARN_ON(curbss)) {
++			if (curbss) {
++				printk("Freeing current BSS\n");
+ 				cfg80211_unhold_bss(curbss);
+ 				cfg80211_put_bss(wdev->wiphy, &curbss->pub);
+ 				wdev->links[link_id].client.current_bss = NULL;
+@@ -1325,7 +1463,7 @@ void __cfg80211_leave(struct cfg80211_registered_device *rdev,
+ 		break;
+ 	case NL80211_IFTYPE_AP:
+ 	case NL80211_IFTYPE_P2P_GO:
+-		__cfg80211_stop_ap(rdev, dev, -1, true);
++		__cfg80211_stop_ap(rdev, dev, -1, true, NULL);
+ 		break;
+ 	case NL80211_IFTYPE_OCB:
+ 		__cfg80211_leave_ocb(rdev, dev);
+@@ -1523,10 +1661,12 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
+ 		wiphy_lock(&rdev->wiphy);
+ 		cfg80211_update_iface_num(rdev, wdev->iftype, -1);
+ 		if (rdev->scan_req && rdev->scan_req->wdev == wdev) {
+-			if (WARN_ON(!rdev->scan_req->notified &&
++			if (!rdev->scan_req->notified &&
+ 				    (!rdev->int_scan_req ||
+-				     !rdev->int_scan_req->notified)))
++				     !rdev->int_scan_req->notified)) {
++				printk("Aborting scan for device\n");
+ 				rdev->scan_req->info.aborted = true;
++			}
+ 			___cfg80211_scan_done(rdev, false);
+ 		}
+ 
+diff --git a/net/wireless/core.h b/net/wireless/core.h
+index 9b85142..15c3aeb 100644
+--- a/net/wireless/core.h
++++ b/net/wireless/core.h
+@@ -377,10 +377,10 @@ int cfg80211_leave_ocb(struct cfg80211_registered_device *rdev,
+ /* AP */
+ int __cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 		       struct net_device *dev, int link,
+-		       bool notify);
++		       bool notify, struct genl_info *info);
+ int cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
+ 		     struct net_device *dev, int link,
+-		     bool notify);
++		     bool notify, struct genl_info *info);
+ 
+ /* MLME */
+ int cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
+@@ -594,5 +594,9 @@ void cfg80211_remove_links(struct wireless_dev *wdev);
+ int cfg80211_remove_virtual_intf(struct cfg80211_registered_device *rdev,
+ 				 struct wireless_dev *wdev);
+ void cfg80211_wdev_release_link_bsses(struct wireless_dev *wdev, u16 link_mask);
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++int cfg80211_link_reconfig_remove(struct wireless_dev *wdev,
++				  const struct cfg80211_link_reconfig_removal_params *params);
++#endif
+ 
+ #endif /* __NET_WIRELESS_CORE_H */
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 6eb357c..f69d057 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -825,6 +825,13 @@ static const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
+ 	[NL80211_ATTR_BSS_DUMP_INCLUDE_USE_DATA] = { .type = NLA_FLAG },
+ 	[NL80211_ATTR_MLO_TTLM_DLINK] = NLA_POLICY_EXACT_LEN(sizeof(u16) * 8),
+ 	[NL80211_ATTR_MLO_TTLM_ULINK] = NLA_POLICY_EXACT_LEN(sizeof(u16) * 8),
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	[NL80211_ATTR_RADIO_IFACE] = { .type = NLA_BINARY, .len = IFNAMSIZ-1 },
++	[NL80211_ATTR_AP_REMOVAL_COUNT] = { .type = NLA_U16 },
++	[NL80211_ATTR_TSF] = { .type = NLA_U64 },
++	[NL80211_ATTR_MLO_AP_RECONFIG] = { .type = NLA_FLAG },
++	[NL80211_ATTR_MLO_AP_AFC] = { .type = NLA_FLAG },
++#endif
+ };
+ 
+ /* policy for the key attributes */
+@@ -1223,6 +1230,13 @@ static int nl80211_msg_put_channel(struct sk_buff *msg, struct wiphy *wiphy,
+ 				goto nla_put_failure;
+ 		}
+ 	}
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	if (chan->center_freq >= 4940 && chan->center_freq <= 5090) {
++		if (nla_put_u16(msg, NL80211_FREQUENCY_ATTR_CHANNEL,
++				chan->hw_value))
++			goto nla_put_failure;
++	}
++#endif
+ 
+ 	return 0;
+ 
+@@ -1626,6 +1640,97 @@ nla_put_failure:
+ 	return -ENOBUFS;
+ }
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++static int nl80211_put_ifcomb_data(struct sk_buff *msg, bool large, int idx,
++				   const struct ieee80211_iface_combination *c,
++				   u16 nested)
++{
++	struct nlattr *nl_combi, *nl_limits;
++	int i;
++
++	nl_combi = nla_nest_start_noflag(msg, idx | nested);
++	if (!nl_combi)
++		goto nla_put_failure;
++
++	nl_limits = nla_nest_start_noflag(msg, NL80211_IFACE_COMB_LIMITS |
++					       nested);
++	if (!nl_limits)
++		goto nla_put_failure;
++
++	for (i = 0; i < c->n_limits; i++) {
++		struct nlattr *nl_limit;
++
++		nl_limit = nla_nest_start_noflag(msg, i + 1);
++		if (!nl_limit)
++			goto nla_put_failure;
++		if (nla_put_u32(msg, NL80211_IFACE_LIMIT_MAX, c->limits[i].max))
++			goto nla_put_failure;
++		if (nl80211_put_iftypes(msg, NL80211_IFACE_LIMIT_TYPES,
++					c->limits[i].types))
++			goto nla_put_failure;
++		nla_nest_end(msg, nl_limit);
++	}
++
++	nla_nest_end(msg, nl_limits);
++
++	if (c->beacon_int_infra_match &&
++	    nla_put_flag(msg, NL80211_IFACE_COMB_STA_AP_BI_MATCH))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_IFACE_COMB_NUM_CHANNELS,
++			c->num_different_channels) ||
++	    nla_put_u32(msg, NL80211_IFACE_COMB_MAXNUM,
++			c->max_interfaces))
++		goto nla_put_failure;
++	if (large &&
++	    (nla_put_u32(msg, NL80211_IFACE_COMB_RADAR_DETECT_WIDTHS,
++			c->radar_detect_widths) ||
++	     nla_put_u32(msg, NL80211_IFACE_COMB_RADAR_DETECT_REGIONS,
++			c->radar_detect_regions)))
++		goto nla_put_failure;
++	if (c->beacon_int_min_gcd &&
++	    nla_put_u32(msg, NL80211_IFACE_COMB_BI_MIN_GCD,
++			c->beacon_int_min_gcd))
++		goto nla_put_failure;
++
++	nla_nest_end(msg, nl_combi);
++
++	return 0;
++nla_put_failure:
++	return -ENOBUFS;
++}
++
++static int nl80211_put_iface_combinations(struct wiphy *wiphy,
++					  struct sk_buff *msg,
++					  int attr, int radio,
++					  bool large, u16 nested)
++{
++	const struct ieee80211_iface_combination *c;
++	struct nlattr *nl_combis;
++	int i, n;
++
++	nl_combis = nla_nest_start_noflag(msg, attr | nested);
++	if (!nl_combis)
++		goto nla_put_failure;
++
++	if (radio >= 0) {
++		c = wiphy->radio[0].iface_combinations;
++		n = wiphy->radio[0].n_iface_combinations;
++	} else {
++		c = wiphy->iface_combinations;
++		n = wiphy->n_iface_combinations;
++	}
++	for (i = 0; i < n; i++)
++		if (nl80211_put_ifcomb_data(msg, large, i + 1, &c[i], nested))
++			goto nla_put_failure;
++
++	nla_nest_end(msg, nl_combis);
++
++	return 0;
++nla_put_failure:
++	return -ENOBUFS;
++}
++
++#else
+ static int nl80211_put_iface_combinations(struct wiphy *wiphy,
+ 					  struct sk_buff *msg,
+ 					  bool large)
+@@ -1698,6 +1803,7 @@ static int nl80211_put_iface_combinations(struct wiphy *wiphy,
+ nla_put_failure:
+ 	return -ENOBUFS;
+ }
++#endif
+ 
+ #ifdef CONFIG_PM
+ static int nl80211_send_wowlan_tcp_caps(struct cfg80211_registered_device *rdev,
+@@ -2396,6 +2502,82 @@ fail:
+ 	return -ENOBUFS;
+ }
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++static int nl80211_put_radio(struct wiphy *wiphy, struct sk_buff *msg, int idx)
++{
++	const struct wiphy_radio *r = &wiphy->radio[idx];
++	struct nlattr *radio, *freq;
++	int i;
++
++	radio = nla_nest_start(msg, idx);
++	if (!radio)
++		return -ENOBUFS;
++
++	if (nla_put_u32(msg, NL80211_WIPHY_RADIO_ATTR_INDEX, idx))
++		goto nla_put_failure;
++
++	for (i = 0; i < r->n_freq_range; i++) {
++		const struct wiphy_radio_freq_range *range = &r->freq_range[i];
++
++		freq = nla_nest_start(msg, NL80211_WIPHY_RADIO_ATTR_FREQ_RANGE);
++		if (!freq)
++			goto nla_put_failure;
++
++		if (nla_put_u32(msg, NL80211_WIPHY_RADIO_FREQ_ATTR_START,
++				range->start_freq) ||
++		    nla_put_u32(msg, NL80211_WIPHY_RADIO_FREQ_ATTR_END,
++				range->end_freq))
++			goto nla_put_failure;
++
++		nla_nest_end(msg, freq);
++	}
++
++	for (i = 0; i < r->n_iface_combinations; i++)
++		if (nl80211_put_ifcomb_data(msg, true,
++					    NL80211_WIPHY_RADIO_ATTR_INTERFACE_COMBINATION,
++					    &r->iface_combinations[i],
++					    NLA_F_NESTED))
++			goto nla_put_failure;
++
++	nla_nest_end(msg, radio);
++
++	return 0;
++
++nla_put_failure:
++	return -ENOBUFS;
++}
++
++static int nl80211_put_radios(struct wiphy *wiphy, struct sk_buff *msg)
++{
++	struct nlattr *radios;
++	int i;
++
++	if (!wiphy->n_radio)
++		return 0;
++
++	radios = nla_nest_start(msg, NL80211_ATTR_WIPHY_RADIOS);
++	if (!radios)
++		return -ENOBUFS;
++
++	for (i = 0; i < wiphy->n_radio; i++)
++		if (nl80211_put_radio(wiphy, msg, i))
++			goto fail;
++
++	nla_nest_end(msg, radios);
++
++	if (nl80211_put_iface_combinations(wiphy, msg,
++					   NL80211_ATTR_WIPHY_INTERFACE_COMBINATIONS,
++					   -1, true, NLA_F_NESTED))
++		return -ENOBUFS;
++
++	return 0;
++
++fail:
++	nla_nest_cancel(msg, radios);
++	return -ENOBUFS;
++}
++#endif
++
+ struct nl80211_dump_wiphy_state {
+ 	s64 filter_wiphy;
+ 	long start;
+@@ -2690,8 +2872,15 @@ static int nl80211_send_wiphy(struct cfg80211_registered_device *rdev,
+ 					rdev->wiphy.software_iftypes))
+ 			goto nla_put_failure;
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++		if (nl80211_put_iface_combinations(&rdev->wiphy, msg,
++						   NL80211_ATTR_INTERFACE_COMBINATIONS,
++						   rdev->wiphy.n_radio ? 0 : -1,
++						   state->split, 0))
++#else
+ 		if (nl80211_put_iface_combinations(&rdev->wiphy, msg,
+ 						   state->split))
++#endif
+ 			goto nla_put_failure;
+ 
+ 		state->split_start++;
+@@ -3008,6 +3197,15 @@ static int nl80211_send_wiphy(struct cfg80211_registered_device *rdev,
+ 		/* done */
+ 		state->split_start = 0;
+ 		break;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	case 17:
++		if (nl80211_put_radios(&rdev->wiphy, msg))
++			goto nla_put_failure;
++
++		/* done */
++		state->split_start = 0;
++		break;
++#endif
+ 	}
+  finish:
+ 	genlmsg_end(msg, hdr);
+@@ -3979,6 +4177,72 @@ static int nl80211_send_iface(struct sk_buff *msg, u32 portid, u32 seq, int flag
+ 		}
+ 
+ 		nla_nest_end(msg, links);
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	} else if (wdev->fallback_valid_links) {
++		unsigned int link_id;
++		struct nlattr *links = nla_nest_start(msg,
++						      NL80211_ATTR_MLO_LINKS);
++
++		if (!links)
++			goto nla_put_failure;
++
++		for_each_fallback_valid_link(wdev, link_id) {
++			struct nlattr *link = nla_nest_start(msg, link_id + 1);
++			struct cfg80211_chan_def chandef = {};
++			int ret;
++
++			if (!link)
++				goto nla_put_failure;
++
++			if (nla_put_u8(msg, NL80211_ATTR_MLO_LINK_ID, link_id))
++				goto nla_put_failure;
++			ret = rdev_get_channel(rdev, wdev, link_id, &chandef);
++			if (ret == 0 && nl80211_send_chandef(msg, &chandef))
++				goto nla_put_failure;
++
++			if (rdev->ops->get_tx_power) {
++				int dbm, ret;
++
++				/* per link tx power is not enabled */
++				ret = rdev_get_tx_power(rdev, wdev, &dbm);
++				if (ret == 0 &&
++				    nla_put_u32(msg, NL80211_ATTR_WIPHY_TX_POWER_LEVEL,
++						DBM_TO_MBM(dbm)))
++					goto nla_put_failure;
++			}
++			nla_nest_end(msg, link);
++		}
++
++		nla_nest_end(msg, links);
++	} else {
++		if (rdev->ops->get_channel) {
++			struct cfg80211_chan_def chandef = {};
++			int ret;
++
++			ret = rdev_get_channel(rdev, wdev, 0, &chandef);
++			if (ret == 0 && nl80211_send_chandef(msg, &chandef))
++				goto nla_put_failure;
++		}
++
++		if (rdev->ops->get_tx_power) {
++			int dbm, ret;
++			ret = rdev_get_tx_power(rdev, wdev, &dbm);
++			if (ret == 0 &&
++			    nla_put_u32(msg, NL80211_ATTR_WIPHY_TX_POWER_LEVEL,
++			    DBM_TO_MBM(dbm)))
++				goto nla_put_failure;
++		}
++		if (rdev->ops->get_txq_stats) {
++			struct cfg80211_txq_stats txqstats = {};
++			int ret = rdev_get_txq_stats(rdev, wdev,
++						     &txqstats);
++
++			if (ret == 0 &&
++			    !nl80211_put_txq_stats(msg, &txqstats,
++						   NL80211_ATTR_TXQ_STATS))
++			goto nla_put_failure;
++		}
++#endif
+ 	}
+ 
+ 	genlmsg_end(msg, hdr);
+@@ -4327,6 +4591,25 @@ static int _nl80211_new_interface(struct sk_buff *skb, struct genl_info *info)
+ 	if (err < 0)
+ 		return err;
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	if (rdev->wiphy.flags & WIPHY_FLAG_SUPPORTS_MLO) {
++		if (info->attrs[NL80211_ATTR_RADIO_IFACE])
++			params.radio_iface =
++				nla_data(info->attrs[NL80211_ATTR_RADIO_IFACE]);
++	}
++
++	if (info->attrs[NL80211_ATTR_MLD_ADDR]) {
++		if (rdev->wiphy.flags & WIPHY_FLAG_SUPPORTS_MLO) {
++			nla_memcpy(params.mld_macaddr,
++				   info->attrs[NL80211_ATTR_MLD_ADDR],
++				   ETH_ALEN);
++			if (!is_valid_ether_addr(params.mld_macaddr))
++				return -EADDRNOTAVAIL;
++		} else
++			return -ENOTSUPP;
++	}
++#endif
++
+ 	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+ 	if (!msg)
+ 		return -ENOMEM;
+@@ -6005,6 +6288,14 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
+ 		nla_get_u32(info->attrs[NL80211_ATTR_BEACON_INTERVAL]);
+ 	params->dtim_period =
+ 		nla_get_u32(info->attrs[NL80211_ATTR_DTIM_PERIOD]);
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	if (info->attrs[NL80211_ATTR_MLO_AP_RECONFIG])
++		params->reconfig =
++			nla_get_flag(info->attrs[NL80211_ATTR_MLO_AP_RECONFIG]);
++	if (info->attrs[NL80211_ATTR_MLO_AP_AFC])
++		params->afc =
++			nla_get_flag(info->attrs[NL80211_ATTR_MLO_AP_AFC]);
++#endif
+ 
+ 	err = cfg80211_validate_beacon_int(rdev, dev->ieee80211_ptr->iftype,
+ 					   params->beacon_interval);
+@@ -6322,7 +6613,7 @@ static int nl80211_stop_ap(struct sk_buff *skb, struct genl_info *info)
+ 	unsigned int link_id = nl80211_link_id(info->attrs);
+ 	struct net_device *dev = info->user_ptr[1];
+ 
+-	return cfg80211_stop_ap(rdev, dev, link_id, false);
++	return cfg80211_stop_ap(rdev, dev, link_id, false, info);
+ }
+ 
+ static const struct nla_policy sta_flags_policy[NL80211_STA_FLAG_MAX + 1] = {
+@@ -11910,6 +12201,14 @@ static int nl80211_connect(struct sk_buff *skb, struct genl_info *info)
+ 	struct cfg80211_cached_keys *connkeys = NULL;
+ 	u32 freq = 0;
+ 	int err;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	struct nlattr **attrs = NULL;
++	unsigned int attrsize;
++	struct nlattr *link;
++	int rem = 0;
++	const u8 *ap_addr;
++	unsigned int link_id;
++#endif
+ 
+ 	memset(&connect, 0, sizeof(connect));
+ 
+@@ -12130,6 +12429,109 @@ static int nl80211_connect(struct sk_buff *skb, struct genl_info *info)
+ 	if (nla_get_flag(info->attrs[NL80211_ATTR_MLO_SUPPORT]))
+ 		connect.flags |= CONNECT_REQ_MLO_SUPPORT;
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	connect.link_id = nl80211_link_id_or_invalid(info->attrs);
++
++	if (info->attrs[NL80211_ATTR_MLO_LINKS]) {
++		attrsize = NUM_NL80211_ATTR * sizeof(*attrs);
++		if (connect.link_id < 0)
++			return -EINVAL;
++
++		if (!(rdev->wiphy.flags & WIPHY_FLAG_SUPPORTS_MLO))
++			return -EINVAL;
++
++		if (info->attrs[NL80211_ATTR_MAC] ||
++				info->attrs[NL80211_ATTR_WIPHY_FREQ] ||
++				!info->attrs[NL80211_ATTR_MLD_ADDR])
++			return -EINVAL;
++
++		connect.ap_mld_addr = nla_data(info->attrs[NL80211_ATTR_MLD_ADDR]);
++		ap_addr = connect.ap_mld_addr;
++
++		attrs = kzalloc(attrsize, GFP_KERNEL);
++		if (!attrs)
++			return -ENOMEM;
++
++		nla_for_each_nested(link,
++				info->attrs[NL80211_ATTR_MLO_LINKS],
++				rem) {
++			memset(attrs, 0, attrsize);
++
++			nla_parse_nested(attrs, NL80211_ATTR_MAX,
++					link, NULL, NULL);
++
++			if (!attrs[NL80211_ATTR_MLO_LINK_ID]) {
++				err = -EINVAL;
++				goto free;
++			}
++
++			link_id = nla_get_u8(attrs[NL80211_ATTR_MLO_LINK_ID]);
++			/* cannot use the same link ID again */
++			if (connect.links[link_id].bss) {
++				err = -EINVAL;
++				goto free;
++			}
++
++			connect.links[link_id].freq =
++				nla_get_u32(attrs[NL80211_ATTR_WIPHY_FREQ]);
++			connect.links[link_id].bssid =
++				nla_data(attrs[NL80211_ATTR_MAC]);
++			/* TODO: which is for assoc link id? */
++			connect.links[link_id].bss =
++				nl80211_assoc_bss(rdev, connect.ssid, connect.ssid_len, attrs, connect.link_id, link_id);
++
++			if (IS_ERR(connect.links[link_id].bss)) {
++				err = PTR_ERR(connect.links[link_id].bss);
++				connect.links[link_id].bss = NULL;
++				goto free;
++			}
++
++			if (attrs[NL80211_ATTR_IE]) {
++				connect.links[link_id].elems =
++					nla_data(attrs[NL80211_ATTR_IE]);
++				connect.links[link_id].elems_len =
++					nla_len(attrs[NL80211_ATTR_IE]);
++
++				if (cfg80211_find_elem(WLAN_EID_FRAGMENT,
++							connect.links[link_id].elems,
++							connect.links[link_id].elems_len)) {
++					GENL_SET_ERR_MSG(info,
++							"cannot deal with fragmentation");
++					err = -EINVAL;
++					goto free;
++				}
++
++				if (cfg80211_find_ext_elem(WLAN_EID_EXT_NON_INHERITANCE,
++							connect.links[link_id].elems,
++							connect.links[link_id].elems_len)) {
++					GENL_SET_ERR_MSG(info,
++							"cannot deal with non-inheritance");
++					err = -EINVAL;
++					goto free;
++				}
++			}
++		}
++
++		if (!connect.links[connect.link_id].bss) {
++			err = -EINVAL;
++			goto free;
++		}
++
++		if (connect.links[connect.link_id].elems_len) {
++			GENL_SET_ERR_MSG(info,
++					"cannot have per-link elems on assoc link");
++			err = -EINVAL;
++			goto free;
++		}
++
++		kfree(attrs);
++		attrs = NULL;
++	} else {
++		if (connect.link_id >= 0)
++			return -EINVAL;
++	}
++#endif
++
+ 	wdev_lock(dev->ieee80211_ptr);
+ 
+ 	err = cfg80211_connect(rdev, dev, &connect, connkeys,
+@@ -12148,6 +12550,13 @@ static int nl80211_connect(struct sk_buff *skb, struct genl_info *info)
+ 
+ 	wdev_unlock(dev->ieee80211_ptr);
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++free:
++	for (link_id = 0; link_id < ARRAY_SIZE(connect.links); link_id++)
++		cfg80211_put_bss(&rdev->wiphy, connect.links[link_id].bss);
++	kfree(attrs);
++#endif
++
+ 	return err;
+ }
+ 
+@@ -12748,10 +13157,12 @@ static int nl80211_tx_mgmt(struct sk_buff *skb, struct genl_info *info)
+ 	 * the valid links for the _station_ anyway, so that's up
+ 	 * to the driver.
+ 	 */
+-	if (params.link_id >= 0 &&
+-	    !(wdev->valid_links & BIT(params.link_id))) {
+-		wdev_unlock(wdev);
+-		return -EINVAL;
++	if (wdev->iftype != NL80211_IFTYPE_STATION) {
++		if (params.link_id >= 0 &&
++		    !(wdev->valid_links & BIT(params.link_id))) {
++			wdev_unlock(wdev);
++			return -EINVAL;
++		}
+ 	}
+ 	wdev_unlock(wdev);
+ 
+@@ -16297,6 +16708,8 @@ static int nl80211_add_link(struct sk_buff *skb, struct genl_info *info)
+ 
+ 	switch (wdev->iftype) {
+ 	case NL80211_IFTYPE_AP:
++	case NL80211_IFTYPE_STATION:
++	case NL80211_IFTYPE_MONITOR:
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -16326,6 +16739,11 @@ static int nl80211_remove_link(struct sk_buff *skb, struct genl_info *info)
+ 	unsigned int link_id = nl80211_link_id(info->attrs);
+ 	struct net_device *dev = info->user_ptr[1];
+ 	struct wireless_dev *wdev = dev->ieee80211_ptr;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	struct cfg80211_link_reconfig_removal_params params = {};
++	bool is_ml_reconfig = false;
++#endif
++	int ret = 0;
+ 
+ 	/* cannot remove if there's no link */
+ 	if (!info->attrs[NL80211_ATTR_MLO_LINK_ID])
+@@ -16333,16 +16751,50 @@ static int nl80211_remove_link(struct sk_buff *skb, struct genl_info *info)
+ 
+ 	switch (wdev->iftype) {
+ 	case NL80211_IFTYPE_AP:
++	case NL80211_IFTYPE_STATION:
++	case NL80211_IFTYPE_MONITOR:
+ 		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	if (info->attrs[NL80211_ATTR_AP_REMOVAL_COUNT]) {
++		/* Parsing and sending information to driver about ML
++		 * reconfiguration is supported only when
++		 * NL80211_EXT_FEATURE_MLD_LINK_REMOVAL_OFFLOAD is set
++		 */
++		if (!wiphy_ext_feature_isset(wdev->wiphy,
++				NL80211_EXT_FEATURE_MLD_LINK_REMOVAL_OFFLOAD))
++			return -EOPNOTSUPP;
++
++		/* If AP removal count is present, it is mandatory to have IE
++		 * attribute as well, return error if not present
++		 */
++		if (!info->attrs[NL80211_ATTR_IE])
++			return -EINVAL;
++
++		is_ml_reconfig = true;
++		params.ie = nla_data(info->attrs[NL80211_ATTR_IE]);
++		params.ie_len = nla_len(info->attrs[NL80211_ATTR_IE]);
++		params.link_removal_cntdown =
++			nla_get_u16(info->attrs[NL80211_ATTR_AP_REMOVAL_COUNT]);
++		params.link_id = link_id;
++	}
++#endif
++
+ 	wdev_lock(wdev);
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	if (is_ml_reconfig)
++		ret = cfg80211_link_reconfig_remove(wdev, &params);
++	else
++		cfg80211_remove_link(wdev, link_id);
++#else
+ 	cfg80211_remove_link(wdev, link_id);
++#endif
+ 	wdev_unlock(wdev);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int
+@@ -16681,6 +17133,30 @@ static int nl80211_pre_doit(const struct genl_split_ops *ops,
+ 			goto out_unlock;
+ 		}
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++		/* MLO fallback to DBDC association */
++		if (wdev->fallback_valid_links &&
++		    (!link_id ||
++		     !(wdev->fallback_valid_links & BIT(nla_get_u8(link_id))))) {
++			err = -EINVAL;
++			goto out_unlock;
++		} else {
++			/* MLO -> require valid link ID */
++			if (wdev->valid_links &&
++			    (!link_id ||
++			     !(wdev->valid_links & BIT(nla_get_u8(link_id))))) {
++				err = -EINVAL;
++				goto out_unlock;
++			}
++
++			/* non-MLO -> no link ID attribute accepted */
++			if (!wdev->fallback_valid_links &&
++			    !wdev->valid_links && link_id) {
++				err = -EINVAL;
++				goto out_unlock;
++			}
++		}
++#else
+ 		/* MLO -> require valid link ID */
+ 		if (wdev->valid_links &&
+ 		    (!link_id ||
+@@ -16694,6 +17170,7 @@ static int nl80211_pre_doit(const struct genl_split_ops *ops,
+ 			err = -EINVAL;
+ 			goto out_unlock;
+ 		}
++#endif
+ 	}
+ 
+ 	if (internal_flags & NL80211_FLAG_MLO_UNSUPPORTED) {
+@@ -19132,6 +19609,12 @@ static void nl80211_frame_tx_status(struct wireless_dev *wdev,
+ 			       status->ack_tstamp, NL80211_ATTR_PAD)))
+ 		goto nla_put_failure;
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	if ((status->link_id > 0) &&
++	    nla_put_u8(msg, NL80211_ATTR_MLO_LINK_ID, status->link_id))
++		goto nla_put_failure;
++#endif
++
+ 	genlmsg_end(msg, hdr);
+ 
+ 	genlmsg_multicast_netns(&nl80211_fam, wiphy_net(&rdev->wiphy), msg, 0,
+@@ -20380,6 +20863,74 @@ nla_put_failure:
+ }
+ EXPORT_SYMBOL(cfg80211_update_owe_info_event);
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++int
++cfg80211_update_link_reconfig_remove_status(struct net_device *netdev,
++					    unsigned int link_id,
++					    u16 tbtt_count, u64 tsf, u32 bcn_intr,
++					    enum ieee80211_link_reconfig_remove_state action)
++{
++	struct wiphy *wiphy = netdev->ieee80211_ptr->wiphy;
++	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
++	struct sk_buff *msg;
++	void *hdr = NULL;
++	int ret = 0;
++
++	/* Only for ML reconfigure link removal offloaded driver, need to
++	 * update the status about the ongoing link removal to userspace.
++	 */
++	if (!wiphy_ext_feature_isset(wiphy,
++				     NL80211_EXT_FEATURE_MLD_LINK_REMOVAL_OFFLOAD))
++		return -EOPNOTSUPP;
++
++	trace_cfg80211_update_link_reconfig_remove_status(wiphy, netdev,
++							  link_id, tbtt_count,
++							  tsf, bcn_intr, action);
++
++	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_ATOMIC);
++	if (!msg)
++		return -ENOMEM;
++
++	if (action == IEEE80211_LINK_RECONFIG_START)
++		hdr = nl80211hdr_put(msg, 0, 0, 0, NL80211_CMD_LINK_REMOVAL_STARTED);
++	else if (action == IEEE80211_LINK_RECONFIG_COMPLETE)
++		hdr = nl80211hdr_put(msg, 0, 0, 0, NL80211_CMD_LINK_REMOVAL_COMPLETED);
++
++	if (!hdr) {
++		ret = -ENOBUFS;
++		goto nla_put_failure;
++	}
++
++	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
++	    nla_put_u32(msg, NL80211_ATTR_IFINDEX, netdev->ifindex)) {
++		ret = -EINVAL;
++		goto nla_put_failure;
++	}
++
++	if (nla_put_u8(msg, NL80211_ATTR_MLO_LINK_ID, link_id) ||
++	    nla_put_u16(msg, NL80211_ATTR_AP_REMOVAL_COUNT, tbtt_count) ||
++	    nla_put_u64_64bit(msg, NL80211_ATTR_TSF, tsf, NL80211_ATTR_PAD) ||
++	    nla_put_u32(msg, NL80211_ATTR_BEACON_INTERVAL, bcn_intr)) {
++		ret = -EINVAL;
++		goto nla_put_failure;
++	}
++
++	genlmsg_end(msg, hdr);
++
++	genlmsg_multicast_netns(&nl80211_fam, wiphy_net(&rdev->wiphy), msg, 0,
++				NL80211_MCGRP_MLME, GFP_ATOMIC);
++
++	return ret;
++
++ nla_put_failure:
++	genlmsg_cancel(msg, hdr);
++	nlmsg_free(msg);
++
++	return ret;
++}
++EXPORT_SYMBOL(cfg80211_update_link_reconfig_remove_status);
++#endif
++
+ /* initialisation/exit functions */
+ 
+ int __init nl80211_init(void)
+diff --git a/net/wireless/rdev-ops.h b/net/wireless/rdev-ops.h
+index 6103476..82afbe3 100644
+--- a/net/wireless/rdev-ops.h
++++ b/net/wireless/rdev-ops.h
+@@ -1463,6 +1463,25 @@ rdev_del_intf_link(struct cfg80211_registered_device *rdev,
+ 	trace_rdev_return_void(&rdev->wiphy);
+ }
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++static inline int
++rdev_link_reconfig_remove(struct cfg80211_registered_device *rdev,
++			  struct net_device *dev,
++			  const struct cfg80211_link_reconfig_removal_params *params)
++{
++	int ret = -EOPNOTSUPP;
++
++	trace_rdev_link_reconfig_remove(&rdev->wiphy, dev, params);
++
++	if (rdev->ops->link_reconfig_remove)
++		ret = rdev->ops->link_reconfig_remove(&rdev->wiphy, dev,
++						      params);
++
++	trace_rdev_return_int(&rdev->wiphy, ret);
++	return ret;
++}
++#endif
++
+ static inline int
+ rdev_add_link_station(struct cfg80211_registered_device *rdev,
+ 		      struct net_device *dev,
+diff --git a/net/wireless/sme.c b/net/wireless/sme.c
+index e4d0abf..66c4c14 100644
+--- a/net/wireless/sme.c
++++ b/net/wireless/sme.c
+@@ -874,6 +874,9 @@ void __cfg80211_connect_result(struct net_device *dev,
+ 		cfg80211_put_bss(wdev->wiphy, cr->links[link].bss);
+ 	}
+ 	wdev->valid_links = cr->valid_links;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	wdev->fallback_valid_links = cr->fallback_valid_links;
++#endif
+ 	for_each_valid_link(cr, link)
+ 		wdev->links[link].client.current_bss =
+ 			bss_from_pub(cr->links[link].bss);
+@@ -1054,6 +1057,9 @@ void cfg80211_connect_done(struct net_device *dev,
+ 	if (params->fils.update_erp_next_seq_num)
+ 		ev->cr.fils.erp_next_seq_num = params->fils.erp_next_seq_num;
+ 	ev->cr.valid_links = params->valid_links;
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	ev->cr.fallback_valid_links = params->fallback_valid_links;
++#endif
+ 	for_each_valid_link(params, link) {
+ 		if (params->links[link].bss)
+ 			cfg80211_hold_bss(
+@@ -1603,7 +1609,7 @@ void cfg80211_autodisconnect_wk(struct work_struct *work)
+ 			break;
+ 		case NL80211_IFTYPE_AP:
+ 		case NL80211_IFTYPE_P2P_GO:
+-			__cfg80211_stop_ap(rdev, wdev->netdev, -1, false);
++			__cfg80211_stop_ap(rdev, wdev->netdev, -1, false, NULL);
+ 			break;
+ 		case NL80211_IFTYPE_MESH_POINT:
+ 			__cfg80211_leave_mesh(rdev, wdev->netdev);
+diff --git a/net/wireless/trace.h b/net/wireless/trace.h
+index 6a1260d..b562787 100644
+--- a/net/wireless/trace.h
++++ b/net/wireless/trace.h
+@@ -3979,6 +3979,35 @@ TRACE_EVENT(cfg80211_links_removed,
+ 		  __entry->link_mask)
+ );
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++TRACE_EVENT(rdev_link_reconfig_remove,
++	    TP_PROTO(struct wiphy *wiphy, struct net_device *netdev,
++		     const struct cfg80211_link_reconfig_removal_params *params),
++
++	TP_ARGS(wiphy, netdev, params),
++
++	TP_STRUCT__entry(WIPHY_ENTRY
++			 NETDEV_ENTRY
++			 __field(u32, link_id)
++			 __field(u16, count)
++			 __dynamic_array(u8, frame, params->ie_len)
++	),
++
++	TP_fast_assign(WIPHY_ASSIGN;
++		       NETDEV_ASSIGN;
++		       __entry->link_id = params->link_id;
++		       __entry->count = params->link_removal_cntdown;
++		       memcpy(__get_dynamic_array(frame), params->ie,
++			      params->ie_len);
++	),
++
++	TP_printk(WIPHY_PR_FMT ", " NETDEV_PR_FMT ", link_id: %u frame:0x%.2x count:%d",
++		  WIPHY_PR_ARG, NETDEV_PR_ARG, __entry->link_id,
++		  le16_to_cpup((__le16 *)__get_dynamic_array(frame)),
++		  __entry->count)
++);
++#endif
++
+ TRACE_EVENT(rdev_set_ttlm,
+ 	TP_PROTO(struct wiphy *wiphy, struct net_device *netdev,
+ 		 struct cfg80211_ttlm_params *params),
+@@ -3999,6 +4028,39 @@ TRACE_EVENT(rdev_set_ttlm,
+ 		  WIPHY_PR_ARG, NETDEV_PR_ARG)
+ );
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++TRACE_EVENT(cfg80211_update_link_reconfig_remove_status,
++	    TP_PROTO(struct wiphy *wiphy, struct net_device *netdev,
++		     unsigned int link_id, u16 tbtt_count, u64 tsf, u32 bcn_intr,
++		     enum ieee80211_link_reconfig_remove_state action),
++
++	TP_ARGS(wiphy, netdev, link_id, tbtt_count, tsf, bcn_intr, action),
++
++	TP_STRUCT__entry(WIPHY_ENTRY
++			 NETDEV_ENTRY
++			 __field(u32, link_id)
++			 __field(u16, tbtt_count)
++			 __field(u64, tsf)
++			 __field(u32, bcn_intr)
++			 __field(enum ieee80211_link_reconfig_remove_state, action)
++	),
++
++	TP_fast_assign(WIPHY_ASSIGN;
++		       NETDEV_ASSIGN;
++		       __entry->link_id = link_id;
++		       __entry->tbtt_count = tbtt_count;
++		       __entry->tsf = tsf;
++		       __entry->bcn_intr = bcn_intr;
++		       __entry->action = action;
++	),
++
++	TP_printk(WIPHY_PR_FMT ", " NETDEV_PR_FMT ", link_id: %u tbtt:%u tsf: %lld, bcn_intr: %u, action: %d",
++		  WIPHY_PR_ARG, NETDEV_PR_ARG,
++		  __entry->link_id, __entry->tbtt_count,
++		  __entry->tsf, __entry->bcn_intr, __entry->action)
++);
++#endif
++
+ #endif /* !__RDEV_OPS_TRACE || TRACE_HEADER_MULTI_READ */
+ 
+ #undef TRACE_INCLUDE_PATH
+diff --git a/net/wireless/util.c b/net/wireless/util.c
+index 10c461a..85c06ae 100644
+--- a/net/wireless/util.c
++++ b/net/wireless/util.c
+@@ -1131,7 +1131,7 @@ int cfg80211_change_iface(struct cfg80211_registered_device *rdev,
+ 		switch (otype) {
+ 		case NL80211_IFTYPE_AP:
+ 		case NL80211_IFTYPE_P2P_GO:
+-			cfg80211_stop_ap(rdev, dev, -1, true);
++			cfg80211_stop_ap(rdev, dev, -1, true, NULL);
+ 			break;
+ 		case NL80211_IFTYPE_ADHOC:
+ 			cfg80211_leave_ibss(rdev, dev, false);
+@@ -2151,7 +2151,8 @@ static int cfg80211_wdev_bi(struct wireless_dev *wdev)
+ 
+ static void cfg80211_calculate_bi_data(struct wiphy *wiphy, u32 new_beacon_int,
+ 				       u32 *beacon_int_gcd,
+-				       bool *beacon_int_different)
++				       bool *beacon_int_different,
++				       int radio_idx)
+ {
+ 	struct wireless_dev *wdev;
+ 
+@@ -2165,6 +2166,12 @@ static void cfg80211_calculate_bi_data(struct wiphy *wiphy, u32 new_beacon_int,
+ 		if (wdev->valid_links)
+ 			continue;
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++		/* skip wdevs not active on the given wiphy radio */
++		if (radio_idx >= 0)
++			continue;
++#endif
++
+ 		wdev_bi = cfg80211_wdev_bi(wdev);
+ 
+ 		if (!wdev_bi)
+@@ -2206,6 +2213,126 @@ int cfg80211_validate_beacon_int(struct cfg80211_registered_device *rdev,
+ 	return 0;
+ }
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++int cfg80211_iter_combinations(struct wiphy *wiphy,
++			       struct iface_combination_params *params,
++			       void (*iter)(const struct ieee80211_iface_combination *c,
++					    void *data),
++			       void *data)
++{
++	const struct wiphy_radio *radio = NULL;
++	const struct ieee80211_iface_combination *c, *cs;
++	const struct ieee80211_regdomain *regdom;
++	enum nl80211_dfs_regions region = 0;
++	int i, j, n, iftype;
++	int num_interfaces = 0;
++	u32 used_iftypes = 0;
++	u32 beacon_int_gcd;
++	bool beacon_int_different;
++
++	if (params->radio_idx >= 0)
++		radio = &wiphy->radio[params->radio_idx];
++
++	/*
++	 * This is a bit strange, since the iteration used to rely only on
++	 * the data given by the driver, but here it now relies on context,
++	 * in form of the currently operating interfaces.
++	 * This is OK for all current users, and saves us from having to
++	 * push the GCD calculations into all the drivers.
++	 * In the future, this should probably rely more on data that's in
++	 * cfg80211 already - the only thing not would appear to be any new
++	 * interfaces (while being brought up) and channel/radar data.
++	 */
++	cfg80211_calculate_bi_data(wiphy, params->new_beacon_int,
++				   &beacon_int_gcd, &beacon_int_different,
++				   params->radio_idx);
++
++	if (params->radar_detect) {
++		rcu_read_lock();
++		regdom = rcu_dereference(cfg80211_regdomain);
++		if (regdom)
++			region = regdom->dfs_region;
++		rcu_read_unlock();
++	}
++
++	for (iftype = 0; iftype < NUM_NL80211_IFTYPES; iftype++) {
++		num_interfaces += params->iftype_num[iftype];
++		if (params->iftype_num[iftype] > 0 &&
++		    !cfg80211_iftype_allowed(wiphy, iftype, 0, 1))
++			used_iftypes |= BIT(iftype);
++	}
++
++	if (radio) {
++		cs = radio->iface_combinations;
++		n = radio->n_iface_combinations;
++	} else {
++		cs = wiphy->iface_combinations;
++		n = wiphy->n_iface_combinations;
++	}
++	for (i = 0; i < n; i++) {
++		struct ieee80211_iface_limit *limits;
++		u32 all_iftypes = 0;
++
++		c = &cs[i];
++		if (num_interfaces > c->max_interfaces)
++			continue;
++		if (params->num_different_channels > c->num_different_channels)
++			continue;
++
++		limits = kmemdup(c->limits, sizeof(limits[0]) * c->n_limits,
++				 GFP_KERNEL);
++		if (!limits)
++			return -ENOMEM;
++
++		for (iftype = 0; iftype < NUM_NL80211_IFTYPES; iftype++) {
++			if (cfg80211_iftype_allowed(wiphy, iftype, 0, 1))
++				continue;
++			for (j = 0; j < c->n_limits; j++) {
++				all_iftypes |= limits[j].types;
++				if (!(limits[j].types & BIT(iftype)))
++					continue;
++				if (limits[j].max < params->iftype_num[iftype])
++					goto cont;
++				limits[j].max -= params->iftype_num[iftype];
++			}
++		}
++
++		if (params->radar_detect !=
++			(c->radar_detect_widths & params->radar_detect))
++			goto cont;
++
++		if (params->radar_detect && c->radar_detect_regions &&
++		    !(c->radar_detect_regions & BIT(region)))
++			goto cont;
++
++		/* Finally check that all iftypes that we're currently
++		 * using are actually part of this combination. If they
++		 * aren't then we can't use this combination and have
++		 * to continue to the next.
++		 */
++		if ((all_iftypes & used_iftypes) != used_iftypes)
++			goto cont;
++
++		if (beacon_int_gcd) {
++			if (c->beacon_int_min_gcd &&
++			    beacon_int_gcd < c->beacon_int_min_gcd)
++				goto cont;
++			if (!c->beacon_int_min_gcd && beacon_int_different)
++				goto cont;
++		}
++
++		/* This combination covered all interface types and
++		 * supported the requested numbers, so we're good.
++		 */
++
++		(*iter)(c, data);
++ cont:
++		kfree(limits);
++	}
++
++	return 0;
++}
++#else
+ int cfg80211_iter_combinations(struct wiphy *wiphy,
+ 			       struct iface_combination_params *params,
+ 			       void (*iter)(const struct ieee80211_iface_combination *c,
+@@ -2231,7 +2358,7 @@ int cfg80211_iter_combinations(struct wiphy *wiphy,
+ 	 * interfaces (while being brought up) and channel/radar data.
+ 	 */
+ 	cfg80211_calculate_bi_data(wiphy, params->new_beacon_int,
+-				   &beacon_int_gcd, &beacon_int_different);
++				   &beacon_int_gcd, &beacon_int_different, -1);
+ 
+ 	if (params->radar_detect) {
+ 		rcu_read_lock();
+@@ -2313,6 +2440,7 @@ int cfg80211_iter_combinations(struct wiphy *wiphy,
+ 
+ 	return 0;
+ }
++#endif
+ EXPORT_SYMBOL(cfg80211_iter_combinations);
+ 
+ static void
+@@ -2650,6 +2778,26 @@ bool cfg80211_iftype_allowed(struct wiphy *wiphy, enum nl80211_iftype iftype,
+ }
+ EXPORT_SYMBOL(cfg80211_iftype_allowed);
+ 
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++int cfg80211_link_reconfig_remove(struct wireless_dev *wdev,
++				  const struct cfg80211_link_reconfig_removal_params *params)
++{
++	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
++	int ret = -EINVAL;
++
++	lockdep_assert_wiphy(wdev->wiphy);
++
++	/* Currently, removal of link from MLD is supported for AP BSS only, it
++	 * can be extended for non-AP/STA MLD as well but that shall use
++	 * action frame to update about its link reconfiguration.
++	 */
++	if (wdev->iftype == NL80211_IFTYPE_AP)
++		ret = rdev_link_reconfig_remove(rdev, wdev->netdev, params);
++
++	return ret;
++}
++#endif
++
+ void cfg80211_remove_link(struct wireless_dev *wdev, unsigned int link_id)
+ {
+ 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
+@@ -2659,7 +2807,7 @@ void cfg80211_remove_link(struct wireless_dev *wdev, unsigned int link_id)
+ 	switch (wdev->iftype) {
+ 	case NL80211_IFTYPE_AP:
+ 	case NL80211_IFTYPE_P2P_GO:
+-		__cfg80211_stop_ap(rdev, wdev->netdev, link_id, true);
++		__cfg80211_stop_ap(rdev, wdev->netdev, link_id, true, NULL);
+ 		break;
+ 	default:
+ 		/* per-link not relevant */
+@@ -2667,6 +2815,9 @@ void cfg80211_remove_link(struct wireless_dev *wdev, unsigned int link_id)
+ 	}
+ 
+ 	wdev->valid_links &= ~BIT(link_id);
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	wdev->fallback_valid_links &= ~BIT(link_id);
++#endif
+ 
+ 	rdev_del_intf_link(rdev, wdev, link_id);
+ 
+@@ -2688,6 +2839,11 @@ void cfg80211_remove_links(struct wireless_dev *wdev)
+ 	if (wdev->valid_links) {
+ 		for_each_valid_link(wdev, link_id)
+ 			cfg80211_remove_link(wdev, link_id);
++#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++	} else if (wdev->fallback_valid_links) {
++		for_each_fallback_valid_link(wdev, link_id)
++			cfg80211_remove_link(wdev, link_id);
++#endif
+ 	}
+ 	wdev_unlock(wdev);
+ }
+-- 
+2.25.1
+

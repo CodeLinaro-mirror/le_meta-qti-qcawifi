@@ -1,0 +1,102 @@
+From 86838b42ccfc072c94164ec955a5600d481236cb Mon Sep 17 00:00:00 2001
+From: Hangtian Zhu <hangtian@qti.qualcomm.com>
+Date: Tue, 31 Mar 2026 16:40:38 +0800
+Subject: [PATCH] wireless: change Makefile to build as module for 6.6 kernel
+
+Change Makefile to build as module for 6.6 kernel.
+
+Signed-off-by: Hangtian Zhu <hangtian@qti.qualcomm.com>
+---
+ net/wireless/Makefile | 72 +++++++++++++------------------------------
+ 1 file changed, 22 insertions(+), 50 deletions(-)
+
+diff --git a/net/wireless/Makefile b/net/wireless/Makefile
+index 527ae66..a25e197 100644
+--- a/net/wireless/Makefile
++++ b/net/wireless/Makefile
+@@ -1,60 +1,32 @@
+-# SPDX-License-Identifier: GPL-2.0
+-obj-$(CONFIG_CFG80211) += cfg80211.o
+-obj-$(CONFIG_LIB80211) += lib80211.o
+-obj-$(CONFIG_LIB80211_CRYPT_WEP) += lib80211_crypt_wep.o
+-obj-$(CONFIG_LIB80211_CRYPT_CCMP) += lib80211_crypt_ccmp.o
+-obj-$(CONFIG_LIB80211_CRYPT_TKIP) += lib80211_crypt_tkip.o
+-
+-obj-$(CONFIG_WEXT_CORE) += wext-core.o
+-obj-$(CONFIG_WEXT_PROC) += wext-proc.o
+-obj-$(CONFIG_WEXT_SPY) += wext-spy.o
+-obj-$(CONFIG_WEXT_PRIV) += wext-priv.o
+-
+-cfg80211-y += core.o sysfs.o radiotap.o util.o reg.o scan.o nl80211.o
+-cfg80211-y += mlme.o ibss.o sme.o chan.o ethtool.o mesh.o ap.o trace.o ocb.o
+-cfg80211-y += pmsr.o
+-cfg80211-$(CONFIG_OF) += of.o
+-cfg80211-$(CONFIG_CFG80211_DEBUGFS) += debugfs.o
+-cfg80211-$(CONFIG_CFG80211_WEXT) += wext-compat.o wext-sme.o
++M ?= $(shell pwd)
++obj-m += cfg80211w.o
+ 
++cfg80211w-objs += core.o sysfs.o radiotap.o util.o reg.o scan.o nl80211.o
++cfg80211w-objs += mlme.o ibss.o sme.o chan.o ethtool.o mesh.o ap.o trace.o ocb.o pmsr.o of.o
++cfg80211w-y += shipped-certs.o
++NOSTDINC_FLAGS += -I${CFG80211_PATH}/include/ -I${CFG80211_PATH}/include/uapi -I${CFG80211_PATH}/net/wireless
+ CFLAGS_trace.o := -I$(src)
++ccflags-y += -DCFG80211_PROP_MULTI_LINK_SUPPORT
++ccflags-y += -DCONFIG_CFG80211=1
++ccflags-y += -DCONFIG_CFG80211_DEFAULT_PS=1
++ccflags-y += -DCONFIG_CFG80211_REQUIRE_SIGNED_REGDB=1
++ccflags-y += -DCONFIG_CFG80211_USE_KERNEL_REGDB_KEYS=1
++ccflags-y += -DCONFIG_NL80211_TESTMODE=1
++
++all: shipped-certs.c
++	$(MAKE) -C $(KERNEL_SRC) M=$(M) V=1 modules
+ 
+-cfg80211-$(CONFIG_CFG80211_USE_KERNEL_REGDB_KEYS) += shipped-certs.o
+-ifneq ($(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR),)
+-cfg80211-y += extra-certs.o
+-endif
++modules_install:
++	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules_install
++%:
++	$(MAKE) -C $(KERNEL_SRC) M=$(M) $@
++clean:
++	$(MAKE) -C $(KERNEL_SRC) M=$(M) clean
+ 
+-$(obj)/shipped-certs.c: $(wildcard $(srctree)/$(src)/certs/*.hex)
+-	@$(kecho) "  GEN     $@"
++shipped-certs.c: $(wildcard certs/*.hex)
+ 	$(Q)(echo '#include "reg.h"'; \
+ 	  echo 'const u8 shipped_regdb_certs[] = {'; \
+ 	  echo | cat - $^ ; \
+ 	  echo '};'; \
+ 	  echo 'unsigned int shipped_regdb_certs_len = sizeof(shipped_regdb_certs);'; \
+ 	 ) > $@
+-
+-$(obj)/extra-certs.c: $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR) \
+-		      $(wildcard $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR)/*.x509)
+-	@$(kecho) "  GEN     $@"
+-	$(Q)(set -e; \
+-	  allf=""; \
+-	  for f in $^ ; do \
+-	      test -f $$f || continue;\
+-	      # similar to hexdump -v -e '1/1 "0x%.2x," "\n"' \
+-	      thisf=$$(od -An -v -tx1 < $$f | \
+-	                   sed -e 's/ /\n/g' | \
+-	                   sed -e 's/^[0-9a-f]\+$$/\0/;t;d' | \
+-	                   sed -e 's/^/0x/;s/$$/,/'); \
+-	      # file should not be empty - maybe command substitution failed? \
+-	      test ! -z "$$thisf";\
+-	      allf=$$allf$$thisf;\
+-	  done; \
+-	  ( \
+-	      echo '#include "reg.h"'; \
+-	      echo 'const u8 extra_regdb_certs[] = {'; \
+-	      echo "$$allf"; \
+-	      echo '};'; \
+-	      echo 'unsigned int extra_regdb_certs_len = sizeof(extra_regdb_certs);'; \
+-	  ) > $@)
+-
+-clean-files += shipped-certs.c extra-certs.c
+-- 
+2.25.1
+
