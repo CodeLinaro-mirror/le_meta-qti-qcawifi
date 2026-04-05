@@ -1,4 +1,4 @@
-From e9b00293eb47a3f7bee241dbdf60beb7745ccd28 Mon Sep 17 00:00:00 2001
+From dd353b54114b6cc5ca1fddd379aad339e9bb05ba Mon Sep 17 00:00:00 2001
 From: Hangtian Zhu <hangtian@qti.qualcomm.com>
 Date: Tue, 17 Mar 2026 19:02:25 +0800
 Subject: [PATCH] cfg80211w: CFG80211_PROP_MULTI_LINK_SUPPORT changes for
@@ -12,20 +12,20 @@ https://git.codelinaro.org/clo/qsdk/oss/kernel/linux-ipq-6.6/-/tree/eb2daa12ed16
 
 Signed-off-by: Hangtian Zhu <hangtian@qti.qualcomm.com>
 ---
- include/net/cfg80211.h       | 163 ++++++++++
+ include/net/cfg80211.h       | 174 +++++++++++
  include/uapi/linux/nl80211.h |  72 +++++
  net/wireless/ap.c            |  25 +-
- net/wireless/core.c          | 148 ++++++++-
+ net/wireless/core.c          | 184 +++++++++++-
  net/wireless/core.h          |   8 +-
  net/wireless/nl80211.c       | 563 ++++++++++++++++++++++++++++++++++-
  net/wireless/rdev-ops.h      |  19 ++
  net/wireless/sme.c           |   8 +-
  net/wireless/trace.h         |  62 ++++
  net/wireless/util.c          | 164 +++++++++-
- 10 files changed, 1209 insertions(+), 23 deletions(-)
+ 10 files changed, 1256 insertions(+), 23 deletions(-)
 
 diff --git a/include/net/cfg80211.h b/include/net/cfg80211.h
-index 9e07d44..1cf816e 100644
+index 9e07d44..0c0cc9e 100644
 --- a/include/net/cfg80211.h
 +++ b/include/net/cfg80211.h
 @@ -715,6 +715,10 @@ struct vif_params {
@@ -260,11 +260,22 @@ index 9e07d44..1cf816e 100644
  
  /**
   * cfg80211_control_port_tx_status - notification of TX status for control
-@@ -9308,4 +9431,44 @@ bool cfg80211_valid_disable_subchannel_bitmap(u16 *bitmap,
+@@ -9308,4 +9431,55 @@ bool cfg80211_valid_disable_subchannel_bitmap(u16 *bitmap,
   */
  void cfg80211_links_removed(struct net_device *dev, u16 link_mask);
  
 +#ifdef CFG80211_PROP_MULTI_LINK_SUPPORT
++#define CFG80211_STOP_INTF_DURING_RECOVERY 1
++
++/**
++ * cfg80211_stop_interface_recovery - issue stop interface of the specified link
++ * @dev: MLO network device.
++ * @link_id: link id of the interface to be stopped
++ *
++ * Stop the AP interface/disconnect the STA interface
++ */
++void cfg80211_stop_interface_recovery(struct net_device *dev, int link_id);
++
 +enum ieee80211_link_reconfig_remove_state {
 +	IEEE80211_LINK_RECONFIG_START,
 +	IEEE80211_LINK_RECONFIG_COMPLETE,
@@ -487,7 +498,7 @@ index 0962770..829d209 100644
  
  	return err;
 diff --git a/net/wireless/core.c b/net/wireless/core.c
-index f669398..e9097f0 100644
+index f669398..88346d0 100644
 --- a/net/wireless/core.c
 +++ b/net/wireless/core.c
 @@ -600,6 +600,142 @@ use_default_name:
@@ -675,6 +686,49 @@ index f669398..e9097f0 100644
  			___cfg80211_scan_done(rdev, false);
  		}
  
+@@ -1607,6 +1747,42 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
+ 	return NOTIFY_OK;
+ }
+ 
++void cfg80211_stop_interface_recovery(struct net_device *dev, int link_id)
++{
++	struct wireless_dev *wdev = dev->ieee80211_ptr;
++	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
++
++	wiphy_lock(&rdev->wiphy);
++	wdev_lock(wdev);
++
++	lockdep_assert_held(&rdev->wiphy.mtx);
++	ASSERT_WDEV_LOCK(wdev);
++	switch (wdev->iftype) {
++		case NL80211_IFTYPE_P2P_CLIENT:
++		case NL80211_IFTYPE_STATION:
++			cfg80211_disconnect(rdev, dev, WLAN_REASON_DEAUTH_LEAVING, true);
++			break;
++		case NL80211_IFTYPE_AP:
++		case NL80211_IFTYPE_P2P_GO:
++			__cfg80211_stop_ap(rdev, dev, link_id, true, NULL);
++			break;
++		case NL80211_IFTYPE_ADHOC:
++		case NL80211_IFTYPE_AP_VLAN:
++		case NL80211_IFTYPE_WDS:
++		case NL80211_IFTYPE_MONITOR:
++		case NL80211_IFTYPE_MESH_POINT:
++		case NL80211_IFTYPE_P2P_DEVICE:
++		case NL80211_IFTYPE_OCB:
++		case NL80211_IFTYPE_NAN:
++		case NL80211_IFTYPE_UNSPECIFIED:
++		case NUM_NL80211_IFTYPES:
++			break;
++	}
++	wdev_unlock(wdev);
++	wiphy_unlock(&rdev->wiphy);
++}
++EXPORT_SYMBOL(cfg80211_stop_interface_recovery);
++
+ static struct notifier_block cfg80211_netdev_notifier = {
+ 	.notifier_call = cfg80211_netdev_notifier_call,
+ };
 diff --git a/net/wireless/core.h b/net/wireless/core.h
 index 9b85142..15c3aeb 100644
 --- a/net/wireless/core.h
