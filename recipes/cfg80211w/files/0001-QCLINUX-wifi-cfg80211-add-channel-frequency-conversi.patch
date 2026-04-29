@@ -1,0 +1,158 @@
+From 2a1e0c8bb29e3d6e2ee8cd90d19366c998b7c44b Mon Sep 17 00:00:00 2001
+From: hangtian <hangtian@qti.qualcomm.com>
+Date: Sun, 4 Feb 2024 10:05:02 +0800
+Subject: [PATCH 1/2] QCLINUX: wifi: cfg80211: add channel frequency conversion
+ formula for extended channels
+
+Below channels are added for long range Wi-Fi extension:
+2.4G 5MHz/10MHz bandwidth:
+203 -- 2414 204 -- 2419 205 -- 2424 206 -- 2429
+207 -- 2434 208 -- 2439 209 -- 2444 210 -- 2449
+211 -- 2454 212 -- 2459 213 -- 2464 214 -- 2469
+215 -- 2474 216 -- 2479
+
+221 -- 2477 222 -- 2482 223 -- 2487 224 -- 2492
+
+191 -- 2402 193 -- 2407 229 -- 2497
+192 -- 2404 194 -- 2409 228 -- 2494 230 -- 2499
+
+5G 5MHz/10MHz bandwidth:
+2  -- 5010 3   -- 5015 4   -- 5020 5   -- 5025 19 -- 5095
+20 -- 5100 21  -- 5105 22  -- 5110 23  -- 5115 24 -- 5120
+25 -- 5125 26  -- 5130 27  -- 5135 28  -- 5140 29 -- 5145
+30 -- 5150 182 -- 5910 183 -- 5915.
+
+Change-Id: I2174534ba07d6c3f61a934b60a263de6bcd824a7
+Signed-off-by: hangtian <hangtian@qti.qualcomm.com>
+---
+ net/wireless/util.c | 100 +++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 99 insertions(+), 1 deletion(-)
+
+diff --git a/net/wireless/util.c b/net/wireless/util.c
+index 1883c9a..4c2a3df 100644
+--- a/net/wireless/util.c
++++ b/net/wireless/util.c
+@@ -79,9 +79,19 @@ u32 ieee80211_channel_to_freq_khz(int chan, enum nl80211_band band)
+ 			return MHZ_TO_KHZ(2484);
+ 		else if (chan < 14)
+ 			return MHZ_TO_KHZ(2407 + chan * 5);
++		else if (chan >= 221 && chan <= 224)
++			return MHZ_TO_KHZ(2477 + (chan - 221) * 5);
++		else if (chan >= 203 && chan <= 216)
++			return MHZ_TO_KHZ(2399 + (chan - 200) * 5);
++		else if ((chan >= 191 && chan <= 194) || (chan >= 228 && chan <= 230)) {
++			if ((chan % 2) == 0)
++				return MHZ_TO_KHZ(2399 + (((chan - 190) * 5) / 2));
++			else
++				return MHZ_TO_KHZ(2399 + (((chan - 190) * 5) / 2) + 1);
++		}
+ 		break;
+ 	case NL80211_BAND_5GHZ:
+-		if (chan >= 182 && chan <= 196)
++		if (chan >= 184 && chan <= 196)
+ 			return MHZ_TO_KHZ(4000 + chan * 5);
+ 		else
+ 			return MHZ_TO_KHZ(5000 + chan * 5);
+@@ -133,11 +143,99 @@ ieee80211_s1g_channel_width(const struct ieee80211_channel *chan)
+ }
+ EXPORT_SYMBOL(ieee80211_s1g_channel_width);
+ 
++/* Handle extension channels for long range Wi-Fi only */
++static int ieee80211_freq_khz_to_channel_ext(u32 freq)
++{
++	int i;
++	/* __ext_group_1 channels:
++	 * 203 204 205 206 207 208 209 210 211 212 213 214 215 216
++	 * __ext_group_2 channels:
++	 * 221 222 223 224
++	 * __ext_group_3 channels:
++	 * 191 192 193 194 228 229 230
++	 * __ext_group_4 channels:
++	 * 2 3 4 5 19 20 21 22 23 24 25 26 27 28 29 30 182 183
++	 */
++	static const u32 __ext_group_1[] = {
++		[0] = 2414,
++		[1] = 2419,
++		[2] = 2424,
++		[3] = 2429,
++		[4] = 2434,
++		[5] = 2439,
++		[6] = 2444,
++		[7] = 2449,
++		[8] = 2454,
++		[9] = 2459,
++		[10] = 2464,
++		[11] = 2469,
++		[12] = 2474,
++		[13] = 2479,
++	};
++	static const u32 __ext_group_2[] = {
++		[0] = 2477,
++		[1] = 2482,
++		[2] = 2487,
++		[3] = 2492,
++	};
++	static const u32 __ext_group_3[] = {
++		[0] = 2402,
++		[1] = 2404,
++		[2] = 2407,
++		[3] = 2409,
++		[4] = 2494,
++		[5] = 2497,
++		[6] = 2499,
++	};
++	static const u32 __ext_group_4[] = {
++		[0] = 5010,
++		[1] = 5015,
++		[2] = 5020,
++		[3] = 5025,
++		[4] = 5095,
++		[5] = 5100,
++		[6] = 5105,
++		[7] = 5110,
++		[8] = 5115,
++		[9] = 5120,
++		[10] = 5125,
++		[11] = 5130,
++		[12] = 5135,
++		[13] = 5140,
++		[14] = 5145,
++		[15] = 5150,
++		[16] = 5910,
++		[17] = 5915,
++	};
++	for (i = 0; i < ARRAY_SIZE(__ext_group_1); i++) {
++		if (freq == __ext_group_1[i])
++			return (200 + ((freq - 2399) / 5));
++	}
++	for (i = 0; i < ARRAY_SIZE(__ext_group_2); i++) {
++		if (freq == __ext_group_2[i])
++			return (221 + ((freq - 2477) / 5));
++	}
++	for (i = 0; i < ARRAY_SIZE(__ext_group_3); i++) {
++		if (freq == __ext_group_3[i])
++			return (190 + (((freq - 2399) * 2) / 5));
++	}
++	for (i = 0; i < ARRAY_SIZE(__ext_group_4); i++) {
++		if (freq == __ext_group_4[i])
++			return ((freq - 5000) / 5);
++	}
++
++	return 0;
++}
++
+ int ieee80211_freq_khz_to_channel(u32 freq)
+ {
++	int ext_ch = 0;
+ 	/* TODO: just handle MHz for now */
+ 	freq = KHZ_TO_MHZ(freq);
+ 
++	ext_ch = ieee80211_freq_khz_to_channel_ext(freq);
++	if (ext_ch > 0)
++		return ext_ch;
+ 	/* see 802.11 17.3.8.3.2 and Annex J */
+ 	if (freq == 2484)
+ 		return 14;
+-- 
+2.34.1
+

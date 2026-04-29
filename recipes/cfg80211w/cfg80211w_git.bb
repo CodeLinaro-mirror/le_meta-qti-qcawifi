@@ -12,7 +12,9 @@ SRC_URI:append:sun:linux = " file://msm-kernel/include/linux/ieee80211.h \
 			     file://msm-kernel/include/net/cfg80211.h \
 			     file://msm-kernel/include/uapi/linux/nl80211.h"
 SRC_URI:append:sun:linux = " file://0001-wireless-change-Makefile-to-build-as-module-for-6.6-.patch \
-	file://0002-cfg80211w-CFG80211_PROP_MULTI_LINK_SUPPORT-changes-f.patch"
+	file://0002-cfg80211w-CFG80211_PROP_MULTI_LINK_SUPPORT-changes-f.patch \
+	file://0001-QCLINUX-wifi-cfg80211-add-channel-frequency-conversi.patch \
+	file://0002-net-Add-patch-to-increase-scan-expire-time.patch"
 
 S = "${WORKDIR}/msm-kernel"
 ADDITIONAL_CONFIGS = ""
