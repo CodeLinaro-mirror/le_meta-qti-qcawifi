@@ -1,0 +1,30 @@
+From 14b6b5d89e5f2fef5b01cb49a6bfcfa8240cac4d Mon Sep 17 00:00:00 2001
+From: Qian Zhang <zhangq@qti.qualcomm.com>
+Date: Wed, 29 Apr 2026 21:16:26 +0530
+Subject: [PATCH 2/2] net: Add patch to increase scan expire time
+
+The defult scan expire time is 30s. It is too short for half/quatre
+channels feature now.
+
+Change-Id: Ie9982d3ebd3e12c95691f8b611003d945ff364d3
+Signed-off-by: Qian Zhangq <zhangq@qti.qualcomm.com>
+---
+ net/wireless/scan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/wireless/scan.c b/net/wireless/scan.c
+index d28a48c..12c3dda 100644
+--- a/net/wireless/scan.c
++++ b/net/wireless/scan.c
+@@ -74,7 +74,7 @@ module_param(bss_entries_limit, int, 0644);
+ MODULE_PARM_DESC(bss_entries_limit,
+                  "limit to number of scan BSS entries (per wiphy, default 1000)");
+ 
+-#define IEEE80211_SCAN_RESULT_EXPIRE	(30 * HZ)
++#define IEEE80211_SCAN_RESULT_EXPIRE	(240 * HZ)
+ 
+ /**
+  * struct cfg80211_colocated_ap - colocated AP information
+-- 
+2.34.1
+
