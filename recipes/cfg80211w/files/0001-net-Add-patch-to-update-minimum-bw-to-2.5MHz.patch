@@ -1,0 +1,38 @@
+From 469808b3de7e049cf4615b1457b9be69d7d41773 Mon Sep 17 00:00:00 2001
+From: xcha <xcha@qti.qualcomm.com>
+Date: Wed, 27 May 2026 15:35:25 +0800
+Subject: [PATCH] net: Add patch to update minimum bw to 2.5MHz
+
+The defult minimum bandwidth is 20MHz. It is cause some 2.4G edge
+channels can not work. Since the device supports a minimum bandwidth of
+ 2.5 MHz, update the minimum bandwidth parameter.
+
+Signed-off-by: xcha <xcha@qti.qualcomm.com>
+---
+ net/wireless/reg.c | 9 ++-------
+ 1 file changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index d88b474..ffebf58 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -2613,14 +2613,9 @@ static void handle_band_custom(struct wiphy *wiphy,
+ 	if (!sband)
+ 		return;
+ 
+-	/*
+-	 * We currently assume that you always want at least 20 MHz,
+-	 * otherwise channel 12 might get enabled if this rule is
+-	 * compatible to US, which permits 2402 - 2472 MHz.
+-	 */
++	/* We currently assume at least 2.5 MHz bandwidth */
+ 	for (i = 0; i < sband->n_channels; i++)
+-		handle_channel_custom(wiphy, &sband->channels[i], regd,
+-				      MHZ_TO_KHZ(20));
++		handle_channel_custom(wiphy, &sband->channels[i], regd, 2500);
+ }
+ 
+ /* Used by drivers prior to wiphy registration */
+-- 
+2.34.1
+
