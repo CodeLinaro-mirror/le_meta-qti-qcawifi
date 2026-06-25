@@ -1,0 +1,43 @@
+From fe0e5041fe12c9b7152fc931333c3c823b178bf3 Mon Sep 17 00:00:00 2001
+From: xcha <xcha@qti.qualcomm.com>
+Date: Thu, 25 Jun 2026 09:37:22 +0800
+Subject: [PATCH] net: Fix incorrect NO_20MHZ/NO_10MHZ flags on edge channels.
+
+For edge channels, freq +/- bw/2 may exceed freq_range,
+causing them to be wrongly marked as unsupported.
+Clear these flags to restore valid channel usage.
+
+Signed-off-by: xcha <xcha@qti.qualcomm.com>
+---
+ net/wireless/reg.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index ffebf58..eb88f16 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -1759,6 +1759,21 @@ static uint32_t reg_rule_to_chan_bw_flags(const struct ieee80211_regdomain *regd
+ 		if (max_bandwidth_khz < MHZ_TO_KHZ(320))
+ 			bw_flags |= IEEE80211_CHAN_NO_320MHZ;
+ 	}
++	
++	/* Clear NO_20MHZ/NO_10MHZ flags for edge channels whose
++		freq +/- bw/2 exceeds freq_range.*/
++	switch (KHZ_TO_MHZ(center_freq_khz)) {
++		case 2402:
++		case 2404:
++		case 2407:
++		case 2497:
++		case 2499:
++			bw_flags &= ~(IEEE80211_CHAN_NO_20MHZ | IEEE80211_CHAN_NO_10MHZ);
++			break;
++		default:
++			break;
++	}
++
+ 	return bw_flags;
+ }
+ 
+-- 
+2.34.1
+
