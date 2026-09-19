@@ -18,7 +18,7 @@ SRC_URI = "http://download.libroxml.net/pool/v2.x/${PKG_NAME}-${PKG_VERSION}.tar
 
 SRC_URI[libtar.md5sum] = "a975f91be150f7a19168a45ce15769ca"
 
-S = "${WORKDIR}/libroxml-2.3.0"
+S = "${UNPACKDIR}/libroxml-2.3.0"
 
 PACKAGE_ARCH  ?= "${MACHINE_ARCH}"
 PR = "r1"

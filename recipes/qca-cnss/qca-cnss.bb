@@ -16,7 +16,7 @@ SRC_URI = "file://qcawifi/qca-cnss"
 SRC_URI += "file://blacklist-qcacnss.conf"
 
 PACKAGE_ARCH  ?= "${MACHINE_ARCH}"
-S = "${WORKDIR}/qcawifi/qca-cnss"
+S = "${UNPACKDIR}/qcawifi/qca-cnss"
 
 FILES:${PN} += "/usr/include/*"
 FILES:${PN} += "/etc/modprobe.d/*"
